@@ -10,7 +10,7 @@ df = pd.read_csv("merged_all.csv")
 df = df.dropna(subset = ["winner_rank", "loser_rank"]).reset_index(drop=True)
 
 
-# flip data around 
+# randomize data
 np.random.seed(42)
 flip = np.random.rand(len(df)) > 0.5
 
