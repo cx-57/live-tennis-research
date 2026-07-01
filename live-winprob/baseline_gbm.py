@@ -1,30 +1,48 @@
-"""Gradient-boosted trees over the raw score state.
+"""Gradient-boosted trees over the raw score state (XGBoost version).
 
 A flexible reference that learns the map from score to win probability directly from data
 instead of assuming the Markov structure. Early stopping is tuned on the validation season.
 """
-import lightgbm as lgb
+import xgboost as xgb
 
 from common import load, split, report
 
-FEATURES = ["sets_diff", "games_diff", "score_diff", "p1_serving", "set_no", "best_of",
-            "tiebreak", "pts_played", "p1_sets", "p2_sets", "p1_games", "p2_games"]
+FEATURES = [
+    "sets_diff", "games_diff", "score_diff", "p1_serving", "set_no", "best_of",
+    "tiebreak", "pts_played", "p1_sets", "p2_sets", "p1_games", "p2_games"
+]
 
-PARAMS = dict(objective="binary", metric="binary_logloss", learning_rate=0.05,
-              num_leaves=63, max_depth=7, feature_fraction=0.8, bagging_fraction=0.8,
-              bagging_freq=1, min_data_in_leaf=200, verbose=-1, seed=42)
+PARAMS = {
+    "objective": "binary:logistic",
+    "eval_metric": "logloss",
+    "learning_rate": 0.05,
+    "max_depth": 7,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 200,
+    "seed": 42
+}
 
 
 def main():
-    train, val, test = split(load(with_elo=False))
-    model = lgb.train(
+    train, val, test = split(load(with_elo=False, match_fraction=0.25))
+
+    dtrain = xgb.DMatrix(train[FEATURES], label=train.y)
+    dval = xgb.DMatrix(val[FEATURES], label=val.y)
+    dtest = xgb.DMatrix(test[FEATURES])
+
+    model = xgb.train(
         PARAMS,
-        lgb.Dataset(train[FEATURES].values, train.y.values),
+        dtrain,
         num_boost_round=2000,
-        valid_sets=[lgb.Dataset(val[FEATURES].values, val.y.values)],
-        callbacks=[lgb.early_stopping(50), lgb.log_evaluation(0)],
+        evals=[(dval, "val")],
+        early_stopping_rounds=50,
+        verbose_eval=False
     )
-    report("gradient boosting (score)", test.y.values, model.predict(test[FEATURES].values))
+
+    preds = model.predict(dtest)
+
+    report("xgboost (score)", test.y.values, preds)
 
 
 if __name__ == "__main__":
