@@ -9,7 +9,7 @@ from markov import predict
 
 
 def main():
-    train, val, test = split(load(with_elo=False))
+    train, val, test = split(load(with_elo=False, match_fraction=0.5))
 
     best_p, best_ll = None, float("inf")
     for p in [0.60, 0.61, 0.62, 0.63, 0.64, 0.65]:

@@ -18,7 +18,7 @@ def serve_probs(df, base, slope):
 
 
 def main():
-    train, val, test = split(load(with_elo=True))
+    train, val, test = split(load(with_elo=True, match_fraction = 0.5))
 
     best, best_ll = None, float("inf")
     for base in [0.61, 0.62, 0.63, 0.64]:
