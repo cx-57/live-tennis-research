@@ -156,6 +156,44 @@ The full result table is saved in:
 
 images/residual_markov_live_features_accuracy.csv
 
+## How to Run
+
+First, install the main Python dependencies:
+
+```bash
+pip install numpy pandas scikit-learn matplotlib xgboost pyarrow
+```
+
+Then prepare the data and Elo artifacts. The expected structure is:
+
+```text
+data/
+├── slam/
+├── atp/
+└── wta/
+
+artifacts/
+├── points.parquet
+└── elo.parquet
+```
+
+Run the model scripts from the repository root:
+
+```bash
+python models/baseline_markov.py
+python models/asymmetric_markov.py
+python models/serve_shrink_model.py
+python models/baseline_xgboost.py
+python models/residual_markov.py
+
+
+Some scripts save result plots and CSV files into the `images/` folder.
+
+## Project Motivation
+
+Pregame tennis prediction only uses information available before the match starts. Live win probability is more dynamic: the model must update after the score changes and after new information about player performance becomes available.
+
+This project focuses on that live setting. The main idea is that tennis scoring should be handled structurally, while machine learning and statistical estimation should be used to estimate the player-specific inputs to that structure.
 ## Limitations
 
 The current version has several limitations:
