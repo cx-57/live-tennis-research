@@ -154,7 +154,6 @@ The baseline Markov model uses only the tennis score state. The asymmetric Marko
 
 The full result table is saved in:
 
-```text
 images/residual_markov_live_features_accuracy.csv
 
 ## Limitations
