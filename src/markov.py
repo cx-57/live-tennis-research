@@ -4,13 +4,11 @@ Player 1 wins a point on its own serve with probability pa, player 2 with probab
 Win probability is always reported from player 1's perspective. The symmetric case pa == pb
 recovers the equal-players anchor, where the win probability is a pure function of the score.
 """
-
 from functools import lru_cache
 import numpy as np
 
 
 def make_solver(pa, pb):
-
     @lru_cache(None)
     def game(s, i, j):
         # P(server wins a game) | server wins each point with prob s, current points i:j
@@ -23,7 +21,6 @@ def make_solver(pa, pb):
             if i == j:
                 return deuce
             return s + (1 - s) * deuce if i > j else s * deuce
-
         return s * game(s, i + 1, j) + (1 - s) * game(s, i, j + 1)
 
     holdA = game(pa, 0, 0)
@@ -40,15 +37,12 @@ def make_solver(pa, pb):
             return 1.0
         if b >= 7 and b - a >= 2:
             return 0.0
-
         k = a + b
         pt_win = lambda kk: pa if tb_server(kk) == 1 else (1 - pb)
-
         if a >= 6 and b >= 6 and a == b:
             # win by two from level: closed form over the next two points
             w1, w2 = pt_win(k), pt_win(k + 1)
             return w1 * w2 / (w1 * w2 + (1 - w1) * (1 - w2))
-
         w = pt_win(k)
         return w * tb(a + 1, b) + (1 - w) * tb(a, b + 1)
 
@@ -67,7 +61,6 @@ def make_solver(pa, pb):
             # advantage set with no final tiebreak: closed form over the next two games
             wA, wB = holdA, 1 - holdB
             return wA * wB / (wA * wB + (1 - wA) * (1 - wB))
-
         p1_game = holdA if p1serve else (1 - holdB)
         return p1_game * setwp(g1 + 1, g2, not p1serve) + (1 - p1_game) * setwp(g1, g2 + 1, not p1serve)
 
@@ -93,9 +86,7 @@ def make_solver(pa, pb):
                 p1_game = game(pa, p1pts, p2pts)
             else:
                 p1_game = 1 - game(pb, p2pts, p1pts)
-
             setp = p1_game * setwp(g1 + 1, g2, not p1serve) + (1 - p1_game) * setwp(g1, g2 + 1, not p1serve)
-
         return matchwp(s1, s2, best_of, setp)
 
     return wp
@@ -120,32 +111,20 @@ def predict(df, pa, pb, state_cols):
     st = df[state_cols].to_numpy()
     pa = np.round(np.broadcast_to(pa, len(df)), 3)
     pb = np.round(np.broadcast_to(pb, len(df)), 3)
-
     out = np.empty(len(df))
     memo = {}
-
     for i in range(len(df)):
         bo, s1, s2, g1, g2, p1s, q1, q2, tie = st[i]
-
-        key = (
-            pa[i], pb[i], int(bo), int(s1), int(s2),
-            int(g1), int(g2), bool(p1s), int(q1), int(q2), bool(tie)
-        )
-
+        key = (pa[i], pb[i], int(bo), int(s1), int(s2), int(g1), int(g2),
+               bool(p1s), int(q1), int(q2), bool(tie))
         v = memo.get(key)
-
         if v is None:
             try:
-                v = solver(pa[i], pb[i])(
-                    int(bo), int(s1), int(s2), int(g1), int(g2),
-                    bool(p1s), int(q1), int(q2), bool(tie)
-                )
+                v = solver(pa[i], pb[i])(int(bo), int(s1), int(s2), int(g1), int(g2),
+                                         bool(p1s), int(q1), int(q2), bool(tie))
             except RecursionError:
                 need = (int(bo) + 1) // 2
                 v = 1.0 if s1 >= need else 0.0 if s2 >= need else 0.5
-
             memo[key] = v
-
         out[i] = v
-
     return np.clip(out, 1e-6, 1 - 1e-6)

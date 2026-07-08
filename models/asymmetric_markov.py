@@ -8,9 +8,18 @@ on the validation season.
 """
 import numpy as np
 
-from common import load, split, report, val_logloss, STATE
-from markov import predict
+import os
+import sys
+from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.common import load, split, report, val_logloss, STATE
+from src.markov import predict
+
+MATCH_FRACTION = 0.50
 
 def serve_probs(df, base, slope):
     edge = np.clip(slope * df.elo_diff.to_numpy(), -0.15, 0.15)
@@ -18,7 +27,7 @@ def serve_probs(df, base, slope):
 
 
 def main():
-    train, val, test = split(load(with_elo=True, match_fraction = 0.5))
+    train, val, test = split(load(with_elo=True, match_fraction=MATCH_FRACTION))
 
     best, best_ll = None, float("inf")
     for base in [0.61, 0.62, 0.63, 0.64]:
