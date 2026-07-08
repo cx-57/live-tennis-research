@@ -1,4 +1,11 @@
-"""Serve-shrink Markov model at one match fraction."""
+"""Serve-shrink Markov model using Elo priors and live serve performance.
+
+This model starts with an Elo-based estimate of each player's serve strength, then blends it
+with each player's serve results from the match so far.
+
+Kappa is the shrinkage strength: a larger kappa makes the model trust the pre-match prior longer,
+while a smaller kappa makes it adjust more quickly to live serve performance.
+"""
 
 import numpy as np
 
@@ -12,12 +19,14 @@ from markov import predict
 
 MATCH_FRACTION = 0.50
 
+# Candidate values for the Elo prior and kappa shrinkage strength
 BASE_GRID = [0.59, 0.60, 0.61, 0.62, 0.63, 0.64, 0.65]
 SLOPE_GRID = [4e-5, 6e-5, 9e-5, 1.3e-4, 1.8e-4, 2.2e-4]
 KAPPA_GRID = [40, 80, 160, 320, 640]
 
 
 def serve_probs(df, base, slope, kappa):
+    # Blend the Elo-based prior with each player's live serve win rate
     edge = np.clip(slope * df.elo_diff.to_numpy(), -0.15, 0.15)
 
     prior_a = base + edge
@@ -33,46 +42,3 @@ def serve_probs(df, base, slope, kappa):
     pb = (p2_n * p2_rate + kappa * prior_b) / (p2_n + kappa)
 
     return np.clip(pa, 0.45, 0.88), np.clip(pb, 0.45, 0.88)
-
-
-def tune_params(val):
-    best_params = None
-    best_ll = float("inf")
-
-    for base in BASE_GRID:
-        for slope in SLOPE_GRID:
-            for kappa in KAPPA_GRID:
-                pa, pb = serve_probs(val, base, slope, kappa)
-                pred = predict(val, pa, pb, STATE)
-                ll = val_logloss(val.y.values, pred)
-
-                if np.isfinite(ll) and ll < best_ll:
-                    best_params = (base, slope, kappa)
-                    best_ll = ll
-
-    if best_params is None:
-        raise ValueError("Could not tune serve-shrink parameters.")
-
-    return best_params, best_ll
-
-
-def main():
-    train, val, test = split(load(with_elo=True, match_fraction=MATCH_FRACTION))
-
-    print(f"match_fraction={MATCH_FRACTION}")
-
-    (base, slope, kappa), val_ll = tune_params(val)
-
-    print(
-        f"serve-shrink params: "
-        f"base={base} slope={slope} kappa={kappa} val_logloss={val_ll:.4f}"
-    )
-
-    pa, pb = serve_probs(test, base, slope, kappa)
-    pred = predict(test, pa, pb, STATE)
-
-    report("serve-shrink Markov", test.y.values, pred)
-
-
-if __name__ == "__main__":
-    main()
