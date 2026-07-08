@@ -141,55 +141,51 @@ Log loss is the most important metric because this is a probability prediction p
 
 ## Current Results
 
-The current paper draft reports the following held-out results:
+The models were evaluated at different match fractions, where the match fraction represents how far into the match the live prediction is made. Later match fractions generally produce higher accuracy and lower log loss because more score and serve-performance information is available.
 
-| Model | Match Fraction | Log Loss | Brier | Accuracy |
+### Markov Baselines
+
+| Model | Match Fraction | Log Loss | Brier Score | Accuracy |
 |---|---:|---:|---:|---:|
-| Symmetric Markov | 0.50 | 0.5363 | 0.1745 | 0.7703 |
-| Elo-asymmetric Markov | 0.50 | 0.4549 | 0.1459 | 0.8050 |
-| Serve-shrink Markov | 0.70 | 0.3000 | 0.0972 | 0.8607 |
-| Serve-shrink + logistic calibration | 0.70 | 0.2940 | 0.0959 | 0.8576 |
+| Baseline Markov | 25% | 0.6292 | 0.2182 | 0.6851 |
+| Baseline Markov | 50% | 0.5363 | 0.1745 | 0.7703 |
+| Baseline Markov | 75% | 0.3498 | 0.1040 | 0.8544 |
+| Asymmetric Markov | 25% | 0.5210 | 0.1738 | 0.7575 |
+| Asymmetric Markov | 50% | 0.4549 | 0.1459 | 0.8050 |
+| Asymmetric Markov | 75% | 0.3096 | 0.0949 | 0.8648 |
 
-The serve-shrink results are evaluated later in matches, so they should not be interpreted as a direct apples-to-apples comparison with the midpoint models. They show that once enough live serving data is available, updating the point-level serve probabilities can produce sharper win-probability estimates.
+The asymmetric Markov model improves over the baseline Markov model at each listed match fraction. This suggests that adding pre-match player strength through Elo-based serve probabilities gives the model a stronger starting point than using score alone.
 
-## How to Run
+### Live Feature and Residual Model Results
 
-First, install the main Python dependencies:
+| Match Fraction | Markov Accuracy | Serve-Shrink Accuracy | Residual Accuracy | Markov Log Loss | Serve-Shrink Log Loss | Residual Log Loss |
+|---:|---:|---:|---:|---:|---:|---:|
+| 5% | 0.7090 | 0.7110 | 0.7090 | 0.5515 | 0.5509 | 0.5553 |
+| 10% | 0.7255 | 0.7296 | 0.7451 | 0.5399 | 0.5352 | 0.5320 |
+| 15% | 0.7358 | 0.7368 | 0.7379 | 0.5287 | 0.5246 | 0.5151 |
+| 20% | 0.7430 | 0.7420 | 0.7523 | 0.5295 | 0.5281 | 0.5035 |
+| 25% | 0.7575 | 0.7564 | 0.7606 | 0.5155 | 0.5142 | 0.4753 |
+| 30% | 0.7492 | 0.7513 | 0.7606 | 0.5414 | 0.5390 | 0.4604 |
+| 35% | 0.7534 | 0.7544 | 0.7668 | 0.5319 | 0.5295 | 0.4397 |
+| 40% | 0.7595 | 0.7626 | 0.7812 | 0.4836 | 0.4803 | 0.4046 |
+| 45% | 0.7843 | 0.7853 | 0.8060 | 0.4683 | 0.4629 | 0.3921 |
+| 50% | 0.8039 | 0.7946 | 0.8215 | 0.4336 | 0.4266 | 0.3530 |
+| 55% | 0.8184 | 0.8111 | 0.8338 | 0.4201 | 0.4057 | 0.3248 |
+| 60% | 0.8338 | 0.8318 | 0.8431 | 0.4120 | 0.4002 | 0.2926 |
+| 65% | 0.8411 | 0.8328 | 0.8617 | 0.3570 | 0.3413 | 0.2725 |
+| 70% | 0.8504 | 0.8607 | 0.8679 | 0.3345 | 0.3086 | 0.2335 |
+| 75% | 0.8648 | 0.8720 | 0.8834 | 0.3139 | 0.2842 | 0.2002 |
+| 80% | 0.8741 | 0.8875 | 0.8916 | 0.2903 | 0.2602 | 0.1791 |
+| 85% | 0.9061 | 0.9092 | 0.9195 | 0.2550 | 0.2254 | 0.1521 |
+| 90% | 0.9360 | 0.9556 | 0.9536 | 0.1834 | 0.1628 | 0.1114 |
+| 95% | 0.9598 | 0.9701 | 0.9649 | 0.1348 | 0.1188 | 0.0648 |
 
-```bash
-pip install numpy pandas scikit-learn matplotlib xgboost pyarrow
-```
+The residual model generally produces the lowest validation log loss across most match fractions, especially later in matches. This supports the idea that a structural Markov model provides a strong foundation, while a residual machine-learning layer can improve probability calibration using additional live features.
 
-Then prepare the data and Elo artifacts. The expected structure is:
+The full result table is saved in:
 
 ```text
-data/
-├── slam/
-├── atp/
-└── wta/
-
-artifacts/
-├── points.parquet
-└── elo.parquet
-```
-
-Run the model scripts from the repository root:
-
-```bash
-python models/baseline_markov.py
-python models/asymmetric_markov.py
-python models/serve_shrink_model.py
-python models/baseline_xgboost.py
-python models/residual_markov.py
-```
-
-Some scripts save result plots and CSV files into the `images/` folder.
-
-## Project Motivation
-
-Pregame tennis prediction only uses information available before the match starts. Live win probability is more dynamic: the model must update after the score changes and after new information about player performance becomes available.
-
-This project focuses on that live setting. The main idea is that tennis scoring should be handled structurally, while machine learning and statistical estimation should be used to estimate the player-specific inputs to that structure.
+images/residual_markov_live_features_accuracy.csv
 
 ## Limitations
 
