@@ -1,6 +1,9 @@
-"""Clean residual Markov + serve-shrink model with selected live features and graphing.
+"""Residual machine-learning model built on top of the Markov tennis model.
 
-Saves graph and CSV into the images/ folder.
+This file compares three live win-probability approaches across different match stages:
+an Elo-based Markov model, a serve-shrink Markov model, and a residual gradient-boosting model.
+The residual model uses the Markov predictions plus live match features to learn corrections
+that the structured Markov model may miss.
 """
 import numpy as np
 import pandas as pd
@@ -20,13 +23,16 @@ from markov import predict
 
 MATCH_FRACTION = 0.75
 
+# Match fractions used to evaluate how accuracy changes as more of the match is known
 PLOT_ACCURACY_CURVE = True
 PLOT_FRACTIONS = np.linspace(0.05, 0.95, 19)
 
+# Output files for the accuracy graph and the underlying results table
 IMAGE_DIR = "images"
 PLOT_PATH = os.path.join(IMAGE_DIR, "residual_markov_live_features_accuracy.png")
 CSV_PATH = os.path.join(IMAGE_DIR, "residual_markov_live_features_accuracy.csv")
 
+# Hyperparameter grids for the Markov prior, serve-shrink strength, and residual ML model
 BASE_GRID = [0.59, 0.60, 0.61, 0.62, 0.63, 0.64, 0.65]
 SLOPE_GRID = [4e-5, 6e-5, 9e-5, 1.3e-4, 1.8e-4, 2.2e-4]
 KAPPA_GRID = [40, 80, 160, 320, 640]
@@ -89,6 +95,7 @@ DERIVED_FEATURES = [
 
 
 def asymmetric_serve_probs(df, base, slope):
+    # Convert Elo difference into separate serve probabilities for each player
     edge = np.clip(slope * df.elo_diff.to_numpy(), -0.15, 0.15)
 
     pa = base + edge
@@ -141,6 +148,7 @@ def markov_prediction(df, base, slope):
 
 
 def serve_shrink_probs(df, base, slope, kappa):
+    # Blend pre-match serve priors with live serve performance from the match so far
     prior_a, prior_b = asymmetric_serve_probs(df, base, slope)
 
     p1_rate = df.p1_serve_rate.to_numpy()
@@ -178,6 +186,7 @@ def tune_serve_shrink_kappa(val, base, slope):
 
 
 def add_ml_features(df, base, slope, kappa):
+    # Add Markov outputs and live-match differences as features for the residual model
     x = df.copy()
 
     prior_a, prior_b = asymmetric_serve_probs(x, base, slope)
@@ -224,6 +233,7 @@ def add_ml_features(df, base, slope, kappa):
 
 
 def feature_columns(df):
+    # Keep only feature columns that actually exist in the current dataset
     cols = [c for c in DERIVED_FEATURES if c in df.columns]
     cols += [c for c in RAW_FEATURES if c in df.columns]
     cols += [c for c in LIVE_EXTRA_FEATURES if c in df.columns]
@@ -233,6 +243,7 @@ def feature_columns(df):
 
 
 def make_features(df, base, slope, kappa, columns=None):
+    # Clean features so the ML model only receives finite numeric values
     x = add_ml_features(df, base, slope, kappa)
 
     if columns is None:
@@ -289,6 +300,7 @@ def refit_on_train_val(train, val, base, slope, kappa, columns, params):
 
 
 def evaluate_fraction(match_fraction):
+    # Evaluate Markov, serve-shrink, and residual models at one match fraction
     train, val, test = split(load(with_elo=True, match_fraction=match_fraction))
 
     (base, slope), markov_ll = tune_markov_params(val)
@@ -334,6 +346,7 @@ def evaluate_fraction(match_fraction):
 
 
 def plot_accuracy_curve():
+    # Run all match fractions and save the accuracy curve
     rows = []
 
     for fraction in PLOT_FRACTIONS:
