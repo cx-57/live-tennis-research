@@ -1,8 +1,8 @@
-"""Gradient-boosted trees over score state and live context.
+"""XGBoost live win-probability baseline.
 
-A flexible reference that learns the map from score to win probability directly from data
-instead of assuming the Markov structure. It also consumes the entropy-weighted psychological
-momentum and other running context features. Early stopping is tuned on the validation season.
+This model learns win probability directly from score state and live match features instead of
+using the Markov recursion. It is used as a flexible machine-learning comparison against the
+structured Markov models.
 """
 import xgboost as xgb
 
@@ -42,11 +42,15 @@ PARAMS = {
     "verbosity": 0,
 }
 
+
 def main():
     train, val, test = split(load(with_elo=False, match_fraction=MATCH_FRACTION))
+
+    # Train XGBoost with validation early stopping to avoid overfitting
     train_dm = xgb.DMatrix(train[FEATURES].values, label=train.y.values, feature_names=FEATURES)
     val_dm = xgb.DMatrix(val[FEATURES].values, label=val.y.values, feature_names=FEATURES)
     test_dm = xgb.DMatrix(test[FEATURES].values, feature_names=FEATURES)
+
     model = xgb.train(
         PARAMS,
         train_dm,
@@ -55,6 +59,7 @@ def main():
         early_stopping_rounds=50,
         verbose_eval=False,
     )
+
     pred = model.predict(test_dm, iteration_range=(0, model.best_iteration + 1))
     report("xgboost (score+PM)", test.y.values, pred)
 
