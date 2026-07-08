@@ -4,12 +4,20 @@ Points are treated as independent and the two players as equally strong, so the 
 probability is a pure function of the score. The single serve-win probability is calibrated on
 the validation season. This is the structural baseline the other models are measured against.
 """
-from common import load, split, report, val_logloss, STATE
-from markov import predict
+import os
+import sys
+from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
+from src.common import load, split, report, val_logloss, STATE
+from src.markov import predict
+
+MATCH_FRACTION = 0.50
 def main():
-    train, val, test = split(load(with_elo=False, match_fraction=0.5))
+    train, val, test = split(load(with_elo=False, match_fraction=MATCH_FRACTION))
 
     best_p, best_ll = None, float("inf")
     for p in [0.60, 0.61, 0.62, 0.63, 0.64, 0.65]:

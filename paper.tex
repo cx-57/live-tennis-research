@@ -1,0 +1,302 @@
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2025_conference,times}
+
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+
+\title{Live Tennis Win Probability from Score-State Recursions and In-Match Serve Updating}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+\author{Anonymous Author(s)}
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+\newcommand{\pserve}{p_{\mathrm{serve}}}
+
+%\iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Live win probability in tennis is a useful test case for combining exact game
+structure with learned player information. The score evolves through nested
+point, game, set, and match states, but the players' pre-match strengths and
+same-day serving form are only partially observed. I build a live tennis win
+probability model on Grand Slam point-by-point data from 2011--2024. A
+hierarchical Markov recursion converts two player-specific serve-point win
+probabilities and the current score into an exact match win probability.
+Pre-match Elo ratings set the prior serve advantage, and in-match serve results
+update that prior through a simple shrinkage estimator. On held-out 2023--2024
+Grand Slam matches, the symmetric score-only recursion reaches 0.5363 log loss
+at the midpoint of matches, the Elo-asymmetric recursion improves to 0.4549, and
+the serve-shrink model evaluated at 70\% match progress reaches 0.3000 log loss
+before a light logistic calibration layer improves it to 0.2940. The result is a
+small, inspectable model whose largest gains come from giving the structural
+tennis recursion the right player-specific inputs.
+\end{abstract}
+
+\section{Introduction}
+
+Tennis has an unusually clean live prediction structure. At any instant, the
+score determines how many points, games, sets, and matches remain; the rules
+then determine exactly how point-level advantage propagates upward. This makes a
+pure machine-learning framing somewhat wasteful. A flexible model can learn that
+a player two sets up is likely to win, but the sport already tells us how
+valuable that lead is under any assumed point-winning probabilities.
+
+The harder part is choosing those point-winning probabilities. A score-only
+model treats the two players as exchangeable, so every match begins at 50--50.
+That is a poor description of a first-round match between a top seed and a
+qualifier. Conversely, a pre-match model knows the players' long-run strength
+but not whether one of them is serving especially well today. The model in this
+paper keeps the rule-based recursion and focuses the learning problem on the
+quantities the recursion actually needs: the chance that each player wins a
+point on serve.
+
+The contribution is deliberately modest and interpretable. I compare three
+families of live predictors: a symmetric Markov anchor using the score alone, an
+asymmetric Markov model whose serve probabilities are shifted by pre-match Elo
+difference, and a serve-shrink model that blends the Elo prior with serve points
+observed earlier in the same match. The approach uses only information available
+live, and each fitted parameter has a direct tennis interpretation.
+
+\section{Data}
+
+The point-level data comes from Jeff Sackmann's public Grand Slam
+point-by-point files, covering the Australian Open, Roland Garros, Wimbledon,
+and the US Open from 2011 through 2024. After filtering incomplete or unscored
+matches, the prepared table contains 1,505,355 points from 8,222 matches. Each
+row is oriented to the file's player 1 and is labeled by whether player 1
+eventually won the match.
+
+For each point I store the score after the point: sets won, games won in the
+current set, point score inside the current game or tiebreak, server, best-of
+length, and whether the set is in a tiebreak. I also compute live context
+features using only earlier points in the match: each player's serve points
+played, serve points won, aces, ace rates, and rally-length summaries. The
+running serve rates default to 0.5 before a player has served a point, avoiding
+any lookahead from the current point.
+
+Pre-match player strength is supplied by an Elo table built from ATP and WTA
+tour-level match results from 2005 onward. Ratings are updated chronologically
+before each match, with a decaying step size as a player accumulates matches.
+The resulting pre-match ratings are joined to Grand Slam point-by-point matches
+by year, event, round ordering, and normalized player names. The Elo artifact
+matches 7,896 of the 8,222 prepared Grand Slam matches.
+
+All tuning uses a time split. Matches through 2021 form the training set, 2022
+is used for validation and parameter selection, and 2023--2024 are held out for
+testing. The held-out period contains 179,832 points from 975 matches in the
+raw point table. Because the current scripts evaluate one live state per match,
+fixed-fraction experiments contain 969 held-out matches after the Elo join.
+
+\section{Method}
+
+\subsection{Markov score recursion}
+
+Let $p_a$ be the probability that player 1 wins a point on player 1's serve,
+and let $p_b$ be the probability that player 2 wins a point on player 2's
+serve. Given $(p_a,p_b)$, the model computes player 1's match win probability
+from the current score by a nested recursion.
+
+At the game level, $G(s,i,j)$ is the probability that the server wins the game
+from point score $i$--$j$ when the server wins each point with probability $s$.
+Absorbing states occur once either player has at least four points and leads by
+two. At deuce and advantage states, the implementation uses the closed-form
+probability of eventually winning the deuce cycle. Set probabilities are then
+computed from game probabilities, alternating server after each game. At
+6--6, a tiebreak recursion handles the one-point, then two-point serve
+alternation. Finally, a match recursion combines the probability of winning the
+current set with the probability of winning future fresh sets until one player
+reaches the required number of sets.
+
+The recursion is memoized over rounded serve probabilities and score states, so
+the model can score a large point table while solving each distinct state only
+once. This structure enforces tennis rules exactly while leaving player quality
+to the choice of $p_a$ and $p_b$.
+
+\subsection{Symmetric anchor}
+
+The first baseline assumes equal players:
+\[
+    p_a = p_b = p.
+\]
+The only free parameter is the global serve-point win probability $p$, selected
+on 2022 validation states from the grid $\{0.60,0.61,\ldots,0.65\}$. The
+selected value is $p=0.64$. This model is a pure score-state anchor: two
+matches with the same score receive the same probability, regardless of player
+identity or match history.
+
+\subsection{Elo-asymmetric serve probabilities}
+
+The asymmetric model keeps the same recursion but assigns different serve
+probabilities using the pre-match Elo gap:
+\[
+    e = \mathrm{clip}(\alpha(\mathrm{Elo}_1-\mathrm{Elo}_2), -0.15, 0.15),
+    \quad
+    p_a = \mathrm{clip}(\beta + e, 0.45, 0.88),
+    \quad
+    p_b = \mathrm{clip}(\beta - e, 0.45, 0.88).
+\]
+The validation grid selects $\beta=0.61$ and $\alpha=1.3\times 10^{-4}$. This
+single change lets the pre-match prediction start away from 50--50 while
+preserving the exact score dynamics.
+
+\subsection{Serve-shrink updating}
+
+The full structural model updates each player's serve probability with
+same-match evidence. Let $r_1,n_1$ be player 1's serve-point win rate and serve
+points observed before the current row, and define $r_2,n_2$ analogously for
+player 2. With Elo-implied priors $\pi_1=\beta+e$ and $\pi_2=\beta-e$, the
+serve probabilities are
+\[
+    p_a = \frac{n_1 r_1 + \kappa \pi_1}{n_1+\kappa},
+    \qquad
+    p_b = \frac{n_2 r_2 + \kappa \pi_2}{n_2+\kappa}.
+\]
+The pseudo-count $\kappa$ controls how quickly the model trusts in-match serve
+performance. Validation over $\{40,80,160,320,640\}$ selects $\kappa=40$ in the
+current run. This is still a conservative update: after 20 service points, the
+prior receives twice as much weight as the observed serve rate.
+
+I also fit an optional logistic calibration layer on top of the structural
+prediction. Its input is the logit of the serve-shrink Markov probability plus
+the live context features. A median imputer, standard scaler, and
+$L_2$-regularized logistic regression are fit on the training and validation
+seasons after selecting the regularization strength on 2022. This layer is not
+needed to define the structural model, but it provides a small empirical
+calibration improvement and a way to test whether additional live features add
+signal beyond the Markov score.
+
+\section{Experiments}
+
+The current model scripts evaluate a single live state per match at a fixed
+fraction of match progress. The symmetric and Elo-asymmetric Markov models are
+evaluated at the midpoint of each match; the serve-shrink model is evaluated at
+70\% of match progress, where in-match serve evidence is more informative. The
+gradient-boosted score baseline is implemented with XGBoost over raw score
+and live context features.
+
+\begin{table}[t]
+\caption{Held-out results on 2023--2024 Grand Slam matches. Each row reports
+the corresponding script's current fixed-fraction evaluation.}
+\label{tab:results}
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+Model & Match fraction & Log loss & Brier & Accuracy \\
+\midrule
+Symmetric Markov & 0.50 & 0.5363 & 0.1745 & 0.7703 \\
+Elo-asymmetric Markov & 0.50 & 0.4549 & 0.1459 & 0.8050 \\
+Serve-shrink Markov & 0.70 & 0.3000 & 0.0972 & 0.8607 \\
+Serve-shrink + logistic calibration & 0.70 & 0.2940 & 0.0959 & 0.8576 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+Table~\ref{tab:results} shows the main pattern. The score-only recursion is
+already strong because tennis scoring is highly informative: at the midpoint of
+a match, the current set and game state explain much of the outcome. Adding the
+Elo prior produces the largest fair head-to-head improvement, reducing midpoint
+log loss from 0.5363 to 0.4549 and raising accuracy from 0.7703 to 0.8050. This
+gain comes from fixing the otherwise unrealistic assumption that the two players
+are equally strong before any points are played.
+
+The serve-shrink model is evaluated later in matches, so its numbers should not
+be read as a direct apples-to-apples comparison with the midpoint models.
+Instead, they show the intended live behavior: once enough match-specific serve
+data has accumulated, updating the point-level inputs to the recursion yields a
+substantially sharper forecast. The calibration layer lowers log loss further
+from 0.3000 to 0.2940, although its 0.5-threshold accuracy is slightly lower,
+which is consistent with a probability calibration improvement rather than a
+hard-classification improvement.
+
+\subsection{Feature importance}
+
+Permutation importance for the calibrated serve-shrink model confirms that the
+model is driven by tennis score structure first and live serving form second.
+On the 70\% held-out states, shuffling player 1 sets increases log loss by
+0.4835, shuffling player 2 sets by 0.4679, and shuffling best-of length by
+0.3072. The largest non-score features are the observed serve rates:
+player 2's serve rate increases log loss by 0.1494 when permuted, and player
+1's by 0.1473. Elo difference remains important, increasing log loss by 0.0474,
+while rally-length features have essentially zero marginal importance in the
+current linear calibration layer.
+
+\section{Discussion}
+
+The results support a simple modeling lesson: in a sport with known recursive
+rules, the most useful learning often happens at the interface between
+observations and the structural model. The Markov recursion does not need to
+learn that winning a tiebreak changes a set, or that a two-set lead in a
+best-of-five match is valuable. Those facts are exact. What it needs are
+reasonable player-specific point probabilities.
+
+The Elo-asymmetric model gives the recursion a sensible pre-match prior and
+accounts for most of the improvement over the symmetric anchor. The serve-shrink
+model then handles the live part of the problem: today's serving performance can
+depart from long-run strength, but it should be shrunk heavily early in the
+match. The selected pseudo-count of 40 serve points is interpretable as the
+amount of prior evidence attached to the Elo-implied serve probability.
+
+There are also clear limitations. The current evaluation scripts use fixed
+match fractions rather than reporting every point on one common test table, so
+the headline rows answer slightly different live questions. The point
+probability model is also intentionally narrow: return strength, surface,
+fatigue, injury, pressure, and tactical changes all enter only indirectly
+through Elo or observed serve outcomes. Finally, the Grand Slam join to Elo is
+name-based and misses a small share of matches, which may introduce selection
+effects if the unmatched matches are not random.
+
+\section{Conclusion}
+
+This paper drafts a compact live tennis win-probability system around an exact
+score recursion. A symmetric Markov model provides a transparent score-only
+anchor, Elo-derived asymmetric serve probabilities supply the major pre-match
+strength correction, and Bayesian-style serve shrinkage updates the model with
+same-day evidence. The resulting model is small enough to inspect by hand, fast
+enough to run point by point, and accurate enough to serve as a credible
+baseline for richer live tennis models.
+
+\subsubsection*{Acknowledgments}
+The data preparation relies on the public tennis datasets maintained by Jeff
+Sackmann. Any remaining errors in data joining, modeling, or interpretation are
+my own.
+
+\begin{thebibliography}{9}
+
+\bibitem[Sackmann(2024a)]{sackmann-slam}
+Jeff Sackmann.
+\newblock Grand Slam point-by-point tennis data.
+\newblock \url{https://github.com/JeffSackmann/tennis_slam_pointbypoint}.
+
+\bibitem[Sackmann(2024b)]{sackmann-atp}
+Jeff Sackmann.
+\newblock ATP tennis rankings, results, and stats.
+\newblock \url{https://github.com/JeffSackmann/tennis_atp}.
+
+\bibitem[Sackmann(2024c)]{sackmann-wta}
+Jeff Sackmann.
+\newblock WTA tennis rankings, results, and stats.
+\newblock \url{https://github.com/JeffSackmann/tennis_wta}.
+
+\end{thebibliography}
+
+\appendix
+\section{Implementation Details}
+
+The implementation is organized as a small pipeline. \texttt{prepare\_data.py}
+builds the point-state table and live running features.
+\texttt{elo.py} builds pre-match ratings from tour-level match history and
+joins them to the point table. \texttt{markov.py} contains the memoized
+point-game-set-match recursion used by all structural models.
+\texttt{baseline\_markov.py}, \texttt{asymmetric\_markov.py}, and
+\texttt{serve\_shrink\_model.py} run the three main experiments. The calibrated
+serve-shrink model and permutation importances are saved in the
+\texttt{artifacts} directory.
+
+\end{document}
