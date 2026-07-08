@@ -16,7 +16,7 @@ import pandas as pd
 
 from src.common import SLAM_DIR, POINTS, ART
 
-
+# Convert tennis point text into numbers 
 SCOREMAP = {"0": 0, "15": 1, "30": 2, "40": 3, "AD": 4}
 
 
@@ -32,9 +32,17 @@ def conv_score(v):
         return np.nan
 
 
+"""Convert one raw match into point-level model features.
+
+Each row of the output represents the state before/at a point in the match.
+The function builds score-state features, live serve statistics, rally/serve
+features, and the final match-winner label used for supervised learning.
+ """
+
 def process_match(g, mid, year, slam):
     g = g.reset_index(drop=True)
 
+    # Helpers to encode numeric and categorical values 
     def numeric_values(col, default=0.0):
         if col not in g:
             return np.full(len(g), default)
@@ -48,6 +56,7 @@ def process_match(g, mid, year, slam):
         s = g[col].astype("string").fillna("__missing__")
         return (pd.util.hash_pandas_object(s, index=False).to_numpy() % 1024).astype(int)
 
+    # Determine completed sets, match winner, and match format.
     sw = pd.to_numeric(g.SetWinner, errors="coerce").fillna(0).astype(int)
 
     p1_sets = (sw == 1).cumsum().values
@@ -67,6 +76,7 @@ def process_match(g, mid, year, slam):
 
     best_of = 2 * sets_to_win - 1
 
+    # Extract point-level score state from dataset
     server = pd.to_numeric(g.PointServer, errors="coerce").fillna(0).astype(int).values
     pw = pd.to_numeric(g.PointWinner, errors="coerce").fillna(0).astype(int).values
 
@@ -78,6 +88,7 @@ def process_match(g, mid, year, slam):
     s1 = g.P1Score.map(conv_score).values
     s2 = g.P2Score.map(conv_score).values
 
+    # Extract optional live-match features if they exist in dataset
     rally = numeric_values("RallyCount", np.nan)
 
     if np.isnan(rally).all():
@@ -89,6 +100,8 @@ def process_match(g, mid, year, slam):
     tiebreak = ((p1g == 6) & (p2g == 6)).astype(int)
     point_no = np.arange(1, len(g) + 1)
 
+    # Prior-stat helpers to compute live stats using only points before the current point
+    # avoids data leakage 
     def prior_sum(values):
         return np.concatenate([[0], np.cumsum(values.astype(float))[:-1]])
 
@@ -122,6 +135,8 @@ def process_match(g, mid, year, slam):
 
         return (w / n.replace(0, np.nan)).fillna(default).to_numpy()
 
+    # Live serve performance so far for each player
+    # These are the main inputs for the serve-shrink model
     p1_serve_rate, p1_serve_n = run_rate(server == 1, (server == 1) & (pw == 1))
     p2_serve_rate, p2_serve_n = run_rate(server == 2, (server == 2) & (pw == 2))
 
@@ -144,8 +159,10 @@ def process_match(g, mid, year, slam):
     p1_recent_ace_rate = rolling_prior_rate(server == 1, p1_ace == 1, window=24)
     p2_recent_ace_rate = rolling_prior_rate(server == 2, p2_ace == 1, window=24)
 
+    # Keep only valid points with known server and point winner
     keep = (server > 0) & (pw > 0)
 
+    # Extra live features that are extracted from the GS point-by-point dataset
     df = pd.DataFrame(
         dict(
             match_id=mid,
