@@ -21,7 +21,9 @@ from src.markov import predict
 
 MATCH_FRACTION = 0.50
 
+
 def serve_probs(df, base, slope):
+    # Convert the Elo gap into separate serve probabilities for player 1 and player 2
     edge = np.clip(slope * df.elo_diff.to_numpy(), -0.15, 0.15)
     return np.clip(base + edge, 0.45, 0.88), np.clip(base - edge, 0.45, 0.88)
 
@@ -30,11 +32,14 @@ def main():
     train, val, test = split(load(with_elo=True, match_fraction=MATCH_FRACTION))
 
     best, best_ll = None, float("inf")
+
+    # Tune base serve strength and Elo slope on the validation season
     for base in [0.61, 0.62, 0.63, 0.64]:
         for slope in [4e-5, 6e-5, 9e-5, 1.3e-4, 1.8e-4]:
             ll = val_logloss(val.y.values, predict(val, *serve_probs(val, base, slope), STATE))
             if ll < best_ll:
                 best, best_ll = (base, slope), ll
+
     base, slope = best
     print(f"calibrated base={base} slope={slope}")
 
