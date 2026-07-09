@@ -1,25 +1,18 @@
-Here’s the same code with a few more comments added, and the comments do **not** use periods
-
-```python
-"""Shared paths, data loading and metrics for the live win-probability models"""
+"""Shared paths, data loading, splitting, and metrics for live win-probability models."""
 import os
+
 import numpy as np
 import pandas as pd
-from sklearn.metrics import log_loss, brier_score_loss, accuracy_score
+from sklearn.metrics import accuracy_score, brier_score_loss, log_loss
 
-# Project root folder
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# Data and artifact folders can be overridden with environment variables
 DATA = os.environ.get("TENNIS_DATA", os.path.join(ROOT, "data"))
 ART = os.environ.get("TENNIS_ARTIFACTS", os.path.join(ROOT, "artifacts"))
 
-# Raw data folders
 SLAM_DIR = os.path.join(DATA, "slam")
 ATP_DIR = os.path.join(DATA, "atp")
 WTA_DIR = os.path.join(DATA, "wta")
-
-# Processed data files used by the models
 POINTS = os.path.join(ART, "points.parquet")
 ELO = os.path.join(ART, "elo.parquet")
 
@@ -38,7 +31,7 @@ STATE = [
 
 
 def load(with_elo=True, match_fraction=None):
-    """Load processed point data, optionally adding Elo and selecting match progress"""
+    """Load processed point data, optionally adding Elo and selecting match progress."""
     df = pd.read_parquet(POINTS)
 
     if with_elo:
@@ -51,29 +44,30 @@ def load(with_elo=True, match_fraction=None):
 
 
 def at_match_fraction(df, fraction):
-    """Keep the point at a fixed fraction of each match"""
+    """Keep the point closest to a fixed fraction of each match."""
     match_len = df.groupby("match_id").point_no.transform("max")
-
     target_point = np.ceil(fraction * match_len).clip(lower=1).astype(int)
 
     return df[df.point_no == target_point].copy()
 
 
 def split(df):
-    """Time split with no match crossing a boundary"""
-    # Train on older seasons, tune on 2022, and evaluate on 2023 and later
-    return df[df.year <= 2021], df[df.year == 2022], df[df.year >= 2023]
+    """Time split with no match crossing a boundary."""
+    train = df[df.year <= 2021]
+    val = df[df.year == 2022]
+    test = df[df.year >= 2023]
+
+    return train, val, test
 
 
 def val_logloss(y, p):
-    """Compute log loss manually for validation tuning"""
+    """Compute clipped binary log loss."""
     p = np.clip(p, 1e-6, 1 - 1e-6)
-
     return -(y * np.log(p) + (1 - y) * np.log(1 - p)).mean()
 
 
 def report(name, y, p):
-    """Print the main evaluation metrics for a model"""
+    """Print the main evaluation metrics for a probability model."""
     p = np.clip(p, 1e-6, 1 - 1e-6)
 
     print(
@@ -81,4 +75,3 @@ def report(name, y, p):
         f"brier={brier_score_loss(y, p):.4f}  "
         f"accuracy={accuracy_score(y, p > 0.5):.4f}"
     )
-```
