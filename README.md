@@ -42,6 +42,7 @@ live-tennis-research/
 │   ├── asymmetric_markov.py
 │   ├── baseline_markov.py
 │   ├── baseline_xgboost.py
+│   ├── calibration_curve.py
 │   ├── residual_markov.py
 │   └── serve_shrink_model.py
 ├── src/
@@ -53,6 +54,8 @@ live-tennis-research/
 ├── images/
 │   ├── model_accuracy.csv
 │   ├── model_accuracy.png
+│   ├── calibration_curve_raw_25.png
+│   ├── calibration_curve_calibrated_25.png
 │   └── other saved result plots
 ├── paper.tex
 ├── README.md
@@ -97,6 +100,10 @@ Runs a machine-learning baseline using score and live context features.
 
 Runs a residual or calibrated model that builds on the structural Markov prediction using selected live features.
 
+### `models/calibration_curve.py`
+
+Runs calibration analysis for the main probability models. It saves reliability diagrams, calibration bins, calibration summary metrics, and tuning details into the `images/` folder.
+
 ## Method
 
 The core model uses a nested Markov recursion:
@@ -136,8 +143,12 @@ Models are evaluated using:
 - Log loss
 - Brier score
 - Accuracy
+- Expected calibration error
+- Reliability diagrams
 
 Log loss is the most important metric because this is a probability prediction problem. Accuracy only measures whether the model is on the correct side of 50%, while log loss rewards well-calibrated probabilities.
+
+Reliability diagrams compare predicted win probability against observed win rate. A well-calibrated model should follow the diagonal line. For example, among states where the model predicts about 70% win probability, player 1 should actually win about 70% of the time.
 
 ## Current Results
 
@@ -154,7 +165,17 @@ The baseline Markov model uses only the tennis score state. The asymmetric Marko
 
 The full result table is saved in:
 
+```text
 images/residual_markov_live_features_accuracy.csv
+```
+
+Calibration results are saved in:
+
+```text
+images/calibration_summary.csv
+images/calibration_bins.csv
+images/calibration_tuning.csv
+```
 
 ## How to Run
 
@@ -187,6 +208,23 @@ python models/baseline_xgboost.py
 python models/residual_markov.py
 ```
 
+Run calibration analysis from the repository root:
+
+```bash
+python models/calibration_curve.py
+```
+
+The calibration script saves raw and validation-calibrated reliability diagrams into `images/`:
+
+```text
+images/calibration_curve_raw_25.png
+images/calibration_curve_raw_50.png
+images/calibration_curve_raw_75.png
+images/calibration_curve_calibrated_25.png
+images/calibration_curve_calibrated_50.png
+images/calibration_curve_calibrated_75.png
+```
+
 Some scripts save result plots and CSV files into the `images/` folder.
 
 ## Project Motivation
@@ -194,6 +232,7 @@ Some scripts save result plots and CSV files into the `images/` folder.
 Pregame tennis prediction only uses information available before the match starts. Live win probability is more dynamic: the model must update after the score changes and after new information about player performance becomes available.
 
 This project focuses on that live setting. The main idea is that tennis scoring should be handled structurally, while machine learning and statistical estimation should be used to estimate the player-specific inputs to that structure.
+
 ## Limitations
 
 The current version has several limitations:
