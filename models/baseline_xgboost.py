@@ -14,8 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.common import load, split, report
-from src.live_features import UNIVERSAL_LIVE_FEATURES
+from src.common import load, report, split
+
 
 MATCH_FRACTION = 0.50
 
@@ -25,7 +25,15 @@ FEATURES = [
     "p1_serve_rate", "p2_serve_rate", "p1_serve_n", "p2_serve_n",
     "rally_avg", "recent_rally_avg", "p1_serve_rally_avg", "p2_serve_rally_avg",
     "p1_ace_rate", "p2_ace_rate", "p1_recent_ace_rate", "p2_recent_ace_rate",
-] + UNIVERSAL_LIVE_FEATURES
+    "p1_points_won", "p2_points_won", "points_won_diff",
+    "p1_break_points", "p2_break_points", "break_point_diff",
+    "p1_break_points_won", "p2_break_points_won", "break_point_won_diff",
+    "p1_first_serve_points_won", "p2_first_serve_points_won", "first_srv_won_diff",
+    "p1_double_faults", "p2_double_faults", "double_fault_diff",
+    "p1_momentum", "p2_momentum", "momentum_diff",
+    "live_serve_diff", "serve_points_total", "serve_points_balance",
+    "serve_sample_weight",
+]
 
 PARAMS = {
     "objective": "binary:logistic",
