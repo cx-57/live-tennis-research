@@ -4,17 +4,18 @@ This model learns win probability directly from score state and live match featu
 using the Markov recursion. It is used as a flexible machine-learning comparison against the
 structured Markov models.
 """
-import xgboost as xgb
 
-import os
 import sys
 from pathlib import Path
+
+import xgboost as xgb
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.common import load, split, report
+from src.live_features import UNIVERSAL_LIVE_FEATURES
 
 MATCH_FRACTION = 0.50
 
@@ -24,10 +25,7 @@ FEATURES = [
     "p1_serve_rate", "p2_serve_rate", "p1_serve_n", "p2_serve_n",
     "rally_avg", "recent_rally_avg", "p1_serve_rally_avg", "p2_serve_rally_avg",
     "p1_ace_rate", "p2_ace_rate", "p1_recent_ace_rate", "p2_recent_ace_rate",
-    "p1_momentum", "p2_momentum", "momentum_diff",
-    "p1_pm_positive", "p2_pm_positive", "pm_positive_diff",
-    "p1_pm_negative", "p2_pm_negative", "pm_negative_diff",
-]
+] + UNIVERSAL_LIVE_FEATURES
 
 PARAMS = {
     "objective": "binary:logistic",
@@ -46,10 +44,27 @@ PARAMS = {
 def main():
     train, val, test = split(load(with_elo=False, match_fraction=MATCH_FRACTION))
 
-    # Train XGBoost with validation early stopping to avoid overfitting
-    train_dm = xgb.DMatrix(train[FEATURES].values, label=train.y.values, feature_names=FEATURES)
-    val_dm = xgb.DMatrix(val[FEATURES].values, label=val.y.values, feature_names=FEATURES)
-    test_dm = xgb.DMatrix(test[FEATURES].values, feature_names=FEATURES)
+    missing = [feature for feature in FEATURES if feature not in train.columns]
+    if missing:
+        raise ValueError(
+            "Missing prepared features: "
+            f"{missing}. Rerun: python3 scripts/prepare_data.py"
+        )
+
+    train_dm = xgb.DMatrix(
+        train[FEATURES].values,
+        label=train.y.values,
+        feature_names=FEATURES,
+    )
+    val_dm = xgb.DMatrix(
+        val[FEATURES].values,
+        label=val.y.values,
+        feature_names=FEATURES,
+    )
+    test_dm = xgb.DMatrix(
+        test[FEATURES].values,
+        feature_names=FEATURES,
+    )
 
     model = xgb.train(
         PARAMS,
@@ -61,7 +76,7 @@ def main():
     )
 
     pred = model.predict(test_dm, iteration_range=(0, model.best_iteration + 1))
-    report("xgboost (score+PM)", test.y.values, pred)
+    report("xgboost (score+live)", test.y.values, pred)
 
 
 if __name__ == "__main__":
