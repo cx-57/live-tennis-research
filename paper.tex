@@ -93,6 +93,41 @@ testing. The held-out period contains 179,832 points from 975 matches in the
 raw point table. Because the current scripts evaluate one live state per match,
 fixed-fraction experiments contain 969 held-out matches after the Elo join.
 
+\begin{table}[t]
+\caption{Dataset composition and filtering audit. Point counts refer to the
+prepared point-level table before the Elo join; percentages for optional fields
+are measured on those rows.}
+\label{tab:data-audit}
+\centering
+\small
+\begin{tabular}{lr}
+\hline
+Quantity & Count or rate \\
+\hline
+Prepared sample & 8,222 matches; 1,505,355 points \\
+ATP / WTA matches & 4,181 / 4,041 \\
+Training (2011--2021) & 6,774 matches; 1,238,084 points \\
+Validation (2022) & 473 matches; 87,439 points \\
+Testing (2023--2024) & 975 matches; 179,832 points \\
+Raw matches excluded & 2,286 of 10,508 \\
+Matched to Elo ratings & 7,896 of 8,222 (96.0\%) \\
+Serve-speed missingness & 373,614 points (24.8\%) \\
+Rally-length missingness & 703,609 points (46.7\%) \\
+Serve width/depth and return depth missingness & 682,210 points (45.3\%) each \\
+\hline
+\end{tabular}
+\parbox{0.96\linewidth}{\footnotesize \emph{Filtering rule.} A match is retained
+only when its point sequence identifies a non-tied final set winner requiring
+two or three sets and contains more than 20 points with valid server and point
+winner codes. Thus walkovers and unscored or unresolved matches are excluded;
+retirements are not removed by label alone (eight retirement-labeled matches
+meet the rule and remain). Rows with invalid server or point-winner codes are
+dropped. Score strings are parsed to the model's numeric state without separate
+imputation; all retained rows in the prepared artifact parse successfully.
+Missing optional measurements are retained and represented by defaults or
+missing-category codes in derived live features.}
+\end{table}
+
 \section{Method}
 
 \subsection{Markov score recursion}
@@ -177,8 +212,8 @@ The current model scripts evaluate a single live state per match at a fixed
 fraction of match progress. The symmetric and Elo-asymmetric Markov models are
 evaluated at the midpoint of each match; the serve-shrink model is evaluated at
 70\% of match progress, where in-match serve evidence is more informative. The
-gradient-boosted score baseline is implemented with XGBoost over raw score
-and live context features.
+gradient-boosted score baseline is implemented with histogram gradient
+boosting over raw score and live context features.
 
 \begin{table}[t]
 \caption{Held-out results on 2023--2024 Grand Slam matches. Each row reports

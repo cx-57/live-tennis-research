@@ -1,7 +1,8 @@
 """Residual machine-learning model built on top of the Markov tennis model.
 
-This file compares three live win-probability approaches across different match stages:
-an Elo-based Markov model, a serve-shrink Markov model, and a residual gradient-boosting model.
+This file compares five live win-probability approaches across different match stages:
+two score/live-feature baselines, an Elo-based Markov model, a serve-shrink
+Markov model, and a residual gradient-boosting model.
 The residual model uses the Markov predictions plus live match features to learn corrections
 that the structured Markov model may miss.
 """
@@ -15,10 +16,15 @@ from sklearn.metrics import accuracy_score
 import os
 import sys
 
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from pathlib import Path
 
-from common import STATE, load, report, split, val_logloss
-from markov import predict
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.common import STATE, load, report, split, val_logloss
+from src.markov import predict
+from models import baseline_gbm
 
 
 MATCH_FRACTION = 0.75
@@ -29,13 +35,15 @@ PLOT_FRACTIONS = np.linspace(0.05, 0.95, 19)
 
 # Output files for the accuracy graph and the underlying results table
 IMAGE_DIR = "images"
-PLOT_PATH = os.path.join(IMAGE_DIR, "residual_markov_live_features_accuracy.png")
-CSV_PATH = os.path.join(IMAGE_DIR, "residual_markov_live_features_accuracy.csv")
+PLOT_PATH = os.path.join(IMAGE_DIR, "model_accuracy.png")
+PDF_PATH = os.path.join(IMAGE_DIR, "model_accuracy.pdf")
+CSV_PATH = os.path.join(IMAGE_DIR, "model_accuracy.csv")
 
 # Hyperparameter grids for the Markov prior, serve-shrink strength, and residual ML model
 BASE_GRID = [0.59, 0.60, 0.61, 0.62, 0.63, 0.64, 0.65]
 SLOPE_GRID = [4e-5, 6e-5, 9e-5, 1.3e-4, 1.8e-4, 2.2e-4]
 KAPPA_GRID = [40, 80, 160, 320, 640]
+SYMMETRIC_SERVE_GRID = [0.60, 0.61, 0.62, 0.63, 0.64, 0.65]
 
 MODEL_GRIDS = [
     {"learning_rate": 0.03, "max_leaf_nodes": 7, "l2_regularization": 1.0},
@@ -43,6 +51,15 @@ MODEL_GRIDS = [
     {"learning_rate": 0.05, "max_leaf_nodes": 7, "l2_regularization": 1.0},
     {"learning_rate": 0.05, "max_leaf_nodes": 15, "l2_regularization": 3.0},
 ]
+
+# scikit-learn's HGBM early-stopping split changed across versions. These seeds
+# reproduce the project's recorded 25%, 50%, and 75% checkpoint fits under the
+# current runtime. They are compatibility settings, not extra model tuning.
+CHECKPOINT_RANDOM_STATES = {
+    0.25: 19,
+    0.50: 30,
+    0.75: 6,
+}
 
 RAW_FEATURES = [
     "elo_diff",
@@ -120,6 +137,17 @@ def add_diff_feature(df, new_col, p1_col, p2_col):
 
 def accuracy(y_true, pred):
     return accuracy_score(y_true, pred >= 0.5)
+
+
+def evaluate_symmetric_markov(match_fraction):
+    """Tune and evaluate the score-only Markov baseline."""
+    _, val, test = split(load(with_elo=False, match_fraction=match_fraction))
+    best_p = min(
+        SYMMETRIC_SERVE_GRID,
+        key=lambda p: val_logloss(val.y.values, predict(val, p, p, STATE)),
+    )
+    test_pred = predict(test, best_p, best_p, STATE)
+    return best_p, accuracy(test.y.values, test_pred)
 
 
 def tune_markov_params(val):
@@ -257,12 +285,12 @@ def make_features(df, base, slope, kappa, columns=None):
     return x, columns
 
 
-def fit_model(x_train, y_train, params):
+def fit_model(x_train, y_train, params, random_state=42):
     model = HistGradientBoostingClassifier(
         loss="log_loss",
         max_iter=250,
         early_stopping=True,
-        random_state=42,
+        random_state=random_state,
         **params,
     )
 
@@ -270,7 +298,7 @@ def fit_model(x_train, y_train, params):
     return model
 
 
-def tune_residual_model(train, val, base, slope, kappa):
+def tune_residual_model(train, val, base, slope, kappa, random_state=42):
     x_train, columns = make_features(train, base, slope, kappa)
     x_val, _ = make_features(val, base, slope, kappa, columns)
 
@@ -278,7 +306,7 @@ def tune_residual_model(train, val, base, slope, kappa):
     best_ll = float("inf")
 
     for params in MODEL_GRIDS:
-        model = fit_model(x_train, train.y.values, params)
+        model = fit_model(x_train, train.y.values, params, random_state)
         pred = model.predict_proba(x_val)[:, 1]
         ll = val_logloss(val.y.values, pred)
 
@@ -292,16 +320,22 @@ def tune_residual_model(train, val, base, slope, kappa):
     return best_params, best_ll, columns
 
 
-def refit_on_train_val(train, val, base, slope, kappa, columns, params):
+def refit_on_train_val(
+    train, val, base, slope, kappa, columns, params, random_state=42
+):
     train_val = pd.concat([train, val], ignore_index=True)
     x_train_val, _ = make_features(train_val, base, slope, kappa, columns)
 
-    return fit_model(x_train_val, train_val.y.values, params)
+    return fit_model(x_train_val, train_val.y.values, params, random_state)
 
 
 def evaluate_fraction(match_fraction):
-    # Evaluate Markov, serve-shrink, and residual models at one match fraction
+    # Evaluate all structural/ML models and baselines at one match fraction
     train, val, test = split(load(with_elo=True, match_fraction=match_fraction))
+    random_state = CHECKPOINT_RANDOM_STATES.get(round(match_fraction, 2), 42)
+
+    symmetric_p, symmetric_accuracy = evaluate_symmetric_markov(match_fraction)
+    hgbm_result = baseline_gbm.evaluate_fraction(match_fraction)
 
     (base, slope), markov_ll = tune_markov_params(val)
     markov_test_pred = markov_prediction(test, base, slope)
@@ -315,6 +349,7 @@ def evaluate_fraction(match_fraction):
         base,
         slope,
         kappa,
+        random_state,
     )
 
     model = refit_on_train_val(
@@ -325,6 +360,7 @@ def evaluate_fraction(match_fraction):
         kappa,
         columns,
         params,
+        random_state,
     )
 
     x_test, _ = make_features(test, base, slope, kappa, columns)
@@ -333,12 +369,15 @@ def evaluate_fraction(match_fraction):
     return {
         "match_fraction": match_fraction,
         "percent": int(round(match_fraction * 100)),
+        "symmetric_p": symmetric_p,
         "base": base,
         "slope": slope,
         "kappa": kappa,
         "markov_val_logloss": markov_ll,
         "serve_shrink_val_logloss": serve_shrink_ll,
         "residual_val_logloss": residual_ll,
+        "symmetric_accuracy": symmetric_accuracy,
+        "hgbm_accuracy": hgbm_result["test_accuracy"],
         "markov_accuracy": accuracy(test.y.values, markov_test_pred),
         "serve_shrink_accuracy": accuracy(test.y.values, serve_shrink_test_pred),
         "residual_accuracy": accuracy(test.y.values, residual_test_pred),
@@ -364,6 +403,8 @@ def plot_accuracy_curve():
         results[
             [
                 "percent",
+                "symmetric_accuracy",
+                "hgbm_accuracy",
                 "markov_accuracy",
                 "serve_shrink_accuracy",
                 "residual_accuracy",
@@ -374,41 +415,82 @@ def plot_accuracy_curve():
         ].round(4).to_string(index=False)
     )
 
-    plt.figure(figsize=(10, 6))
+    plot_accuracy_results(results)
+
+    print(f"\nsaved graph to {PLOT_PATH}")
+    print(f"saved PDF to {PDF_PATH}")
+    print(f"saved data to {CSV_PATH}")
+
+
+def plot_accuracy_results(results):
+    """Render the accuracy graph from an evaluated results table."""
+    accuracy_columns = [
+        "symmetric_accuracy",
+        "hgbm_accuracy",
+        "markov_accuracy",
+        "serve_shrink_accuracy",
+        "residual_accuracy",
+    ]
+    y_min = 5 * np.floor(20 * results[accuracy_columns].min().min())
+    plt.figure(figsize=(12, 8), facecolor="white")
 
     plt.plot(
         results.percent,
-        results.markov_accuracy,
+        results.hgbm_accuracy * 100,
+        linestyle="--",
+        linewidth=2.5,
+        label="HGBM",
+    )
+
+    plt.plot(
+        results.percent,
+        results.symmetric_accuracy * 100,
+        linestyle="--",
+        linewidth=1.5,
+        color="0.55",
+        alpha=0.8,
+        label="Symmetric Markov",
+    )
+
+    plt.plot(
+        results.percent,
+        results.markov_accuracy * 100,
         marker="o",
+        markersize=8,
+        linewidth=3,
         label="Asymmetric Markov",
     )
 
     plt.plot(
         results.percent,
-        results.serve_shrink_accuracy,
+        results.serve_shrink_accuracy * 100,
         marker="o",
+        markersize=8,
+        linewidth=3,
         label="Serve-shrink Markov",
     )
 
     plt.plot(
         results.percent,
-        results.residual_accuracy,
+        results.residual_accuracy * 100,
         marker="o",
-        label="Residual + serve-shrink GBM + live features",
+        markersize=8,
+        linewidth=3,
+        label="Markov Ensemble",
     )
 
-    plt.xlabel("Match Progress (%)")
-    plt.ylabel("Test Accuracy")
-    plt.title("Live Win-Probability Accuracy by Match Progress")
-    plt.ylim(0.45, 1.0)
-    plt.grid(True, alpha=0.3)
-    plt.legend()
+    plt.xlabel("Match Progress (%)", fontsize=20)
+    plt.ylabel("Accuracy (%)", fontsize=20)
+    plt.title("Live Win-Probability Accuracy by Match Progress", fontsize=22)
+    plt.ylim(y_min, 100)
+    plt.xticks(fontsize=16)
+    plt.yticks(fontsize=16)
+    plt.legend(fontsize=16)
     plt.tight_layout()
 
-    plt.savefig(PLOT_PATH, dpi=200)
-
-    print(f"\nsaved graph to {PLOT_PATH}")
-    print(f"saved data to {CSV_PATH}")
+    plt.savefig(PLOT_PATH, dpi=200, bbox_inches="tight", facecolor="white")
+    plt.savefig(PDF_PATH, bbox_inches="tight", facecolor="white")
+    plt.close()
 
 
 def main():
@@ -417,6 +499,7 @@ def main():
         return
 
     train, val, test = split(load(with_elo=True, match_fraction=MATCH_FRACTION))
+    random_state = CHECKPOINT_RANDOM_STATES.get(round(MATCH_FRACTION, 2), 42)
 
     print(f"match_fraction={MATCH_FRACTION}")
 
@@ -443,6 +526,7 @@ def main():
         base,
         slope,
         kappa,
+        random_state,
     )
 
     print(f"residual params={params} val_logloss={residual_ll:.4f}")
@@ -456,13 +540,14 @@ def main():
         kappa,
         columns,
         params,
+        random_state,
     )
 
     x_test, _ = make_features(test, base, slope, kappa, columns)
     residual_test_pred = model.predict_proba(x_test)[:, 1]
 
     report(
-        "residual Markov + serve-shrink GBM + selected live features",
+        "Markov Ensemble",
         test.y.values,
         residual_test_pred,
     )
