@@ -1,260 +1,205 @@
-# Live Tennis Win Probability
+<h1 align="center">Forecasting the Winner of a Live Tennis Match</h1>
 
-This repository contains a live tennis win-probability modeling project. The goal is to estimate the probability that a player wins a tennis match while the match is already in progress, using the current score state, pre-match player strength, and in-match serving performance.
+<p align="center">
+  <a href="mailto:charlesxie157@gmail.com">Charles Xie</a><sup>1</sup> &nbsp;&middot;&nbsp;
+  <a href="https://aneeshers.github.io">Aneesh Muppidi</a><sup>2</sup>
+</p>
+<p align="center"><sub><sup>1</sup> Natick High School &nbsp;·&nbsp; <sup>2</sup> University of Oxford</sub></p>
 
-The project combines a rule-based Markov recursion with learned player-specific inputs. Tennis scoring has a fixed recursive structure across points, games, sets, tiebreaks, and matches, so the model does not need to learn the rules of tennis from scratch. Instead, the main modeling problem is estimating the point-level serve probabilities that feed into the recursion.
+<p align="center">
+  <a href="paper.pdf">
+    <img src="https://img.shields.io/badge/Paper-PDF-b31b1b?style=for-the-badge&logo=adobeacrobatreader&logoColor=white" alt="Paper"></a>
+  &nbsp;
+  <a href="https://github.com/JeffSackmann/tennis_slam_pointbypoint">
+    <img src="https://img.shields.io/badge/Data-Sackmann-2c6fad?style=for-the-badge&logo=github&logoColor=white" alt="Data"></a>
+</p>
 
-## Overview
+<p align="center">
+  <img src="images/model_accuracy.png" width="72%" alt="Accuracy vs. match progress">
+</p>
 
-The project compares several live win-probability models:
+> **TL;DR** &mdash; Tennis scoring is a fixed recursive structure, so a live model
+> should not have to learn the rules of tennis. We keep an exact
+> point&rarr;game&rarr;set&rarr;match **Markov recursion** and use learning only for
+> its inputs: pre-match **Elo** sets the serve priors, **Bayesian shrinkage**
+> updates them from in-match serving, and a **gradient-boosted residual layer**
+> corrects the structural prediction. The stacked ensemble reaches
+> **76.1 / 82.2 / 88.3%** accuracy at 25/50/75% match progress with log losses of
+> **0.4753 / 0.3530 / 0.2002**, beating every component model.
 
-1. **Symmetric Markov model**  
-   A score-only baseline that treats both players as equally strong. The model uses a single global serve-point win probability and computes match win probability from the current score.
+This is the official code release for the paper. It covers the full pipeline:
+building the point-level dataset from raw Grand Slam point-by-point data,
+constructing pre-match Elo ratings, the Markov recursion, all five models, and
+the calibration analysis.
 
-2. **Elo-asymmetric Markov model**  
-   A structural Markov model where each player's serve probability is shifted using the pre-match Elo difference. This allows the model to start matches away from 50/50 when one player is stronger.
+| Model | What it adds |
+|--|--|
+| Symmetric Markov | Score state only; one global serve-point probability |
+| Elo-asymmetric Markov | Pre-match player strength via an Elo-derived serve edge |
+| Serve-shrink Markov | Bayesian shrinkage of the Elo prior toward live serve performance |
+| HGBM | Non-structural ML baseline over score + live features |
+| **Stacked Markov ensemble** | Gradient-boosted residual on top of the structural predictions |
 
-3. **Serve-shrink Markov model**  
-   A live model that blends the Elo-based prior with serve points observed earlier in the same match. A pseudo-count parameter controls how quickly the model trusts in-match serve performance.
+---
 
-4. **Residual / calibrated model**  
-   A machine-learning layer on top of the structural Markov prediction. This model uses the Markov probability plus selected live features to improve probability calibration.
+## Repository layout
 
-## Data
-
-The project is designed around public tennis datasets:
-
-- Grand Slam point-by-point data
-- ATP match results
-- WTA match results
-
-The point-level data is transformed into live match states. Each row represents a point in a match and includes the score after that point, server information, set/game/point state, and whether player 1 eventually won the match.
-
-Pre-match Elo ratings are built from ATP and WTA match results and joined to the Grand Slam point-by-point data.
-
-Large raw data files are not intended to be stored directly in this repository.
-
-## Repository Structure
-
-```text
-live-tennis-research/
-├── models/
-│   ├── asymmetric_markov.py
-│   ├── baseline_markov.py
-│   ├── baseline_gbm.py
-│   ├── calibration_curve.py
-│   ├── markov_ensemble.py
-│   └── serve_shrink_model.py
+```
+.
 ├── src/
-│   ├── __init__.py
-│   ├── common.py
-│   ├── elo.py
-│   ├── markov.py
-│   └── prepare_data.py
-├── images/
-│   ├── model_accuracy.csv
-│   ├── model_accuracy.png
-│   ├── calibration_curve_raw_25.png
-│   ├── calibration_curve_calibrated_25.png
-│   └── other saved result plots
+│   ├── prepare_data.py     # raw Grand Slam PBP -> point-level modeling table
+│   ├── live_features.py    # running in-match features (leakage-free)
+│   ├── elo.py              # career-adjusted Elo from ATP/WTA match results
+│   ├── markov.py           # point -> game -> set -> match recursion
+│   └── common.py           # paths, loading, chronological split, metrics
+│
+├── models/
+│   ├── baseline_markov.py       # symmetric Markov baseline
+│   ├── asymmetric_markov.py     # Elo-asymmetric Markov
+│   ├── serve_shrink_model.py    # serve-shrink Markov
+│   ├── baseline_gbm.py          # histogram gradient-boosting baseline
+│   ├── markov_ensemble.py       # stacked Markov ensemble (main model)
+│   ├── calibration_curve.py     # reliability diagrams + ECE
+│   ├── plot_atp_wta_accuracy.py # tour-specific accuracy figure
+│   └── year_split_2011_2019_dev2017_test2014.py  # DeepTennis-split control
+│
+├── images/                 # result plots and CSVs used in the paper
 ├── paper.tex
-├── README.md
-└── .gitignore
+└── README.md  (this file)
 ```
 
-## Main Components
+---
 
-### `src/prepare_data.py`
-
-Builds the point-level modeling table from raw Grand Slam point-by-point data. It creates the live score state and running match features used by the models.
-
-### `src/elo.py`
-
-Builds pre-match Elo ratings from ATP and WTA match results. These ratings are used to estimate each player's prior strength before a match begins.
-
-### `src/markov.py`
-
-Contains the Markov recursion for tennis scoring. Given the current score and each player's serve-point win probability, it computes the probability that player 1 wins the match.
-
-### `src/common.py`
-
-Stores shared paths, data loading functions, train/validation/test splitting, and evaluation metrics.
-
-### `models/baseline_markov.py`
-
-Runs the symmetric Markov baseline. This model uses only the score state and a global serve-point probability.
-
-### `models/asymmetric_markov.py`
-
-Runs the Elo-asymmetric Markov model. This model adjusts serve probabilities based on the pre-match Elo gap.
-
-### `models/serve_shrink_model.py`
-
-Runs the serve-shrink model. This model combines the Elo prior with observed in-match serve performance.
-
-### `models/baseline_gbm.py`
-
-Runs a machine-learning baseline using score and live context features.
-
-### `models/markov_ensemble.py`
-
-Runs a residual or calibrated model that builds on the structural Markov prediction using selected live features.
-
-### `models/calibration_curve.py`
-
-Runs calibration analysis for the main probability models. It saves reliability diagrams, calibration bins, calibration summary metrics, and tuning details into the `images/` folder.
-
-## Method
-
-The core model uses a nested Markov recursion:
-
-- Point probabilities determine game probabilities.
-- Game probabilities determine set probabilities.
-- Set probabilities determine match probabilities.
-
-The structural model requires two main inputs:
-
-- Probability player 1 wins a point on player 1's serve
-- Probability player 2 wins a point on player 2's serve
-
-The symmetric baseline uses the same serve probability for both players. The asymmetric model shifts these probabilities using Elo difference. The serve-shrink model updates them using serve results observed earlier in the match.
-
-The serve-shrink update has the form:
-
-```text
-updated serve probability =
-(observed serve points won + prior pseudo-count contribution)
-/
-(observed serve points + pseudo-count)
-```
-
-This prevents the model from overreacting to a small number of early serve points while still allowing it to adjust as more in-match evidence becomes available.
-
-## Evaluation
-
-The project uses a time-based split:
-
-- Training: matches through 2021
-- Validation: 2022
-- Testing: 2023 and later
-
-Models are evaluated using:
-
-- Log loss
-- Brier score
-- Accuracy
-- Expected calibration error
-- Reliability diagrams
-
-Log loss is the most important metric because this is a probability prediction problem. Accuracy only measures whether the model is on the correct side of 50%, while log loss rewards well-calibrated probabilities.
-
-Reliability diagrams compare predicted win probability against observed win rate. A well-calibrated model should follow the diagonal line. For example, among states where the model predicts about 70% win probability, player 1 should actually win about 70% of the time.
-
-## Current Results
-
-The models were evaluated at 25%, 50%, and 75% of the way through each match. These checkpoints show how live win-probability performance changes as more score and in-match serving information becomes available.
-
-| Model | 25% Accuracy | 25% Log Loss | 25% Brier | 50% Accuracy | 50% Log Loss | 50% Brier | 75% Accuracy | 75% Log Loss | 75% Brier |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Baseline Markov | 0.6851 | 0.6292 | 0.2182 | 0.7703 | 0.5363 | 0.1745 | 0.8544 | 0.3498 | 0.1040 |
-| Asymmetric Markov | 0.7575 | 0.5210 | 0.1738 | 0.8050 | 0.4549 | 0.1459 | 0.8648 | 0.3096 | 0.0949 |
-| Serve-Shrink Markov | 0.7564 | 0.5142 | — | 0.7946 | 0.4266 | — | 0.8720 | 0.2842 | — |
-| Markov Ensemble | 0.7606 | 0.4753 | — | 0.8215 | 0.3530 | — | 0.8834 | 0.2002 | — |
-
-The baseline Markov model uses only the tennis score state. The asymmetric Markov model adds pre-match player strength through Elo-based serve probabilities. The serve-shrink model updates those probabilities using observed in-match serving data. The Markov Ensemble model adds a machine-learning correction on top of the structural Markov prediction and performs best overall in this comparison, especially by log loss.
-
-The full result table is saved in:
-
-```text
-images/markov_ensemble_live_features_accuracy.csv
-```
-
-Calibration results are saved in:
-
-```text
-images/calibration_summary.csv
-images/calibration_bins.csv
-images/calibration_tuning.csv
-```
-
-## How to Run
-
-First, install the main Python dependencies:
+## Setup
 
 ```bash
-pip install numpy pandas scikit-learn matplotlib xgboost pyarrow
+python -m venv .venv && source .venv/bin/activate
+pip install numpy pandas scikit-learn matplotlib xgboost lightgbm pyarrow
 ```
 
-Then prepare the data and Elo artifacts. The expected structure is:
+### Data
 
-```text
+The project builds on Jeff Sackmann's public datasets. Raw data is **not**
+committed; place it as follows (paths are overridable with the `TENNIS_DATA`
+and `TENNIS_ARTIFACTS` environment variables):
+
+```
 data/
-├── slam/
-├── atp/
-└── wta/
-
-artifacts/
-├── points.parquet
-└── elo.parquet
+├── slam/     # tennis_slam_pointbypoint
+├── atp/      # tennis_atp
+└── wta/      # tennis_wta
 ```
 
-Run the model scripts from the repository root:
+Then build the two artifacts every model reads:
 
 ```bash
-python models/baseline_markov.py
-python models/asymmetric_markov.py
-python models/serve_shrink_model.py
-python models/baseline_gbm.py
-python models/markov_ensemble.py
+python src/prepare_data.py    # -> artifacts/points.parquet
+python src/elo.py             # -> artifacts/elo.parquet
 ```
 
-Run calibration analysis from the repository root:
+`points.parquet` holds one row per pre-point match state (8,222 matches,
+1,505,355 states after filtering). Every live feature is computed from points
+*completed before* the prediction state, so there is no lookahead leakage.
+
+---
+
+## Reproducing the paper
+
+All scripts are run from the repository root. The match-progress checkpoint is
+the `MATCH_FRACTION` constant at the top of each model script (0.25 / 0.50 /
+0.75); the chronological split is fixed in `src/common.py` (train 2011–2021,
+validate 2022, test 2023–2024).
+
+```bash
+python models/baseline_markov.py      # Symmetric Markov row
+python models/asymmetric_markov.py    # Elo-asymmetric Markov row
+python models/serve_shrink_model.py   # Serve-shrink Markov row
+python models/baseline_gbm.py         # HGBM row
+python models/markov_ensemble.py      # Markov Ensemble row (main result)
+```
+
+Calibration curves and the tour breakdown:
 
 ```bash
 python models/calibration_curve.py
+python models/plot_atp_wta_accuracy.py
 ```
 
-The calibration script saves raw and validation-calibrated reliability diagrams into `images/`:
+The non-chronological DeepTennis-comparable control:
 
-```text
-images/calibration_curve_raw_25.png
-images/calibration_curve_raw_50.png
-images/calibration_curve_raw_75.png
-images/calibration_curve_calibrated_25.png
-images/calibration_curve_calibrated_50.png
-images/calibration_curve_calibrated_75.png
+```bash
+python models/year_split_2011_2019_dev2017_test2014.py
 ```
 
-Some scripts save result plots and CSV files into the `images/` folder.
+### Expected numbers
 
-## Project Motivation
+Test period 2023–2024, evaluated at fixed fractions of match progress.
 
-Pregame tennis prediction only uses information available before the match starts. Live win probability is more dynamic: the model must update after the score changes and after new information about player performance becomes available.
+| Model | 25% acc | 50% acc | 75% acc | All points | 25% LL | 50% LL | 75% LL |
+|--|--:|--:|--:|--:|--:|--:|--:|
+| Symmetric Markov | 0.6851 | 0.7703 | 0.8544 | 73.21% | 0.6292 | 0.5363 | 0.3498 |
+| Elo-asymmetric Markov | 0.7575 | 0.8050 | 0.8648 | 77.56% | 0.5210 | 0.4549 | 0.3096 |
+| Serve-shrink Markov | 0.7564 | 0.7946 | 0.8720 | 77.68% | 0.5142 | 0.4266 | 0.2842 |
+| HGBM | 0.6944 | 0.7918 | 0.8738 | 73.98% | 0.5376 | 0.3788 | 0.2299 |
+| **Stacked Markov ensemble** | **0.7606** | **0.8215** | **0.8834** | **77.84%** | **0.4753** | **0.3530** | **0.2002** |
 
-This project focuses on that live setting. The main idea is that tennis scoring should be handled structurally, while machine learning and statistical estimation should be used to estimate the player-specific inputs to that structure.
+Log loss is the metric that matters here: accuracy only asks whether the model
+is on the correct side of 0.5, while log loss scores the whole probability.
+Saved result tables live in `images/` (`model_accuracy.csv`,
+`markov_ensemble_live_features_accuracy.csv`, `calibration_summary.csv`,
+`calibration_bins.csv`, `atp_wta_match_fraction_accuracy.csv`).
 
-## Limitations
+---
 
-The current version has several limitations:
+## Method
 
-- Some evaluations use fixed match fractions instead of every point in the match.
-- Surface, fatigue, injury, tactics, and pressure are not modeled directly.
-- Elo matching depends on player-name joins, which may miss some matches.
-- Serve and return strength are simplified into serve-point probabilities.
-- The residual model is still relatively lightweight.
+The recursion is exact. With `p1` and `p2` the two players' serve-point win
+probabilities, the probability that player 1 wins the next point is `p1` when
+serving and `1 - p2` when receiving, and game/set/match probabilities follow
+from the official scoring rules (two-point margins, server alternation,
+tiebreaks). This reduces the statistical problem to estimating `p1` and `p2`.
 
-## Future Improvements
+* **Elo prior.** Career-adjusted Elo (all players start at 1500, update factor
+  `K = 250 / (m + 5)^0.4` declining with match experience). The rating gap is
+  mapped to a clipped serve-probability edge.
+* **Serve-shrink update.** The prior is blended with the live serve rate,
+  `p = (n·r + κ·π) / (n + κ)`, so an early 9-of-10 stretch does not swing the
+  estimate before the sample supports it. `κ` is tuned on validation log loss.
+* **Residual layer.** A `HistGradientBoostingClassifier` takes the two
+  structural predictions plus score-state and live features and outputs the
+  final probability.
 
-Possible next steps:
+---
 
-- Evaluate every point on a common held-out test set.
-- Add surface-specific Elo ratings.
-- Separate serve strength from return strength.
-- Add pressure-point features.
-- Improve calibration across different match stages.
-- Compare the structural model against stronger machine-learning baselines.
-- Build a simple live visualization that updates win probability point by point.
+## Caveats & known limitations
+
+* Player strength is compressed into serve-point probabilities; return strength
+  is not modeled separately, and nothing varies by surface.
+* Fatigue, injury, weather, handedness, playing style, and tactics are absent,
+  and only implicitly visible through live performance.
+* Elo linking depends on standardized player-name joins and covers 96.0% of
+  matches; the remainder falls out of the Elo-conditioned models.
+* The 2011–2019 DeepTennis-split table is a **non-chronological** control and is
+  reported only for comparability — it is subject to look-ahead bias and should
+  not be read as a clean result.
+* Model scripts evaluate at fixed match fractions rather than at every point.
+
+---
+
+## Citation
+
+```bibtex
+@misc{xie2026livetennis,
+  title  = {Forecasting the Winner of a Live Tennis Match},
+  author = {Xie, Charles and Muppidi, Aneesh},
+  year   = {2026},
+  note   = {Preprint},
+  howpublished = {\url{https://github.com/cx-57/live-tennis-research}}
+}
+```
 
 ## Acknowledgments
 
-This project uses public tennis datasets maintained by Jeff Sackmann, including Grand Slam point-by-point data and ATP/WTA match results.
+This project uses the public tennis datasets maintained by
+[Jeff Sackmann](https://github.com/JeffSackmann): Grand Slam point-by-point
+data and ATP/WTA tour-level match results.
