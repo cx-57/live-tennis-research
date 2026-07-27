@@ -1,0 +1,4 @@
+match_fraction,percent,symmetric_p,symmetric_val_logloss,base,slope,markov_val_logloss,kappa,serve_shrink_val_logloss,residual_val_logloss,residual_params,n_features
+0.25,25,0.65,0.629999711403176,0.64,0.00013,0.51548135468913,640,0.5141572651211359,0.47903097359488767,"{'learning_rate': 0.03, 'max_leaf_nodes': 15, 'l2_regularization': 1.0}",35
+0.5,50,0.63,0.5112083058851209,0.59,0.00013,0.4336377609093448,160,0.4266459308808263,0.35215779171235073,"{'learning_rate': 0.05, 'max_leaf_nodes': 15, 'l2_regularization': 3.0}",35
+0.75,75,0.6,0.3593036591695003,0.59,0.00013,0.3138664882970343,40,0.28416670234068264,0.20109448996410223,"{'learning_rate': 0.05, 'max_leaf_nodes': 15, 'l2_regularization': 3.0}",35

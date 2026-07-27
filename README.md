@@ -41,9 +41,9 @@ live-tennis-research/
 ├── models/
 │   ├── asymmetric_markov.py
 │   ├── baseline_markov.py
-│   ├── baseline_xgboost.py
+│   ├── baseline_gbm.py
 │   ├── calibration_curve.py
-│   ├── residual_markov.py
+│   ├── markov_ensemble.py
 │   └── serve_shrink_model.py
 ├── src/
 │   ├── __init__.py
@@ -92,11 +92,11 @@ Runs the Elo-asymmetric Markov model. This model adjusts serve probabilities bas
 
 Runs the serve-shrink model. This model combines the Elo prior with observed in-match serve performance.
 
-### `models/baseline_xgboost.py`
+### `models/baseline_gbm.py`
 
 Runs a machine-learning baseline using score and live context features.
 
-### `models/residual_markov.py`
+### `models/markov_ensemble.py`
 
 Runs a residual or calibrated model that builds on the structural Markov prediction using selected live features.
 
@@ -159,14 +159,14 @@ The models were evaluated at 25%, 50%, and 75% of the way through each match. Th
 | Baseline Markov | 0.6851 | 0.6292 | 0.2182 | 0.7703 | 0.5363 | 0.1745 | 0.8544 | 0.3498 | 0.1040 |
 | Asymmetric Markov | 0.7575 | 0.5210 | 0.1738 | 0.8050 | 0.4549 | 0.1459 | 0.8648 | 0.3096 | 0.0949 |
 | Serve-Shrink Markov | 0.7564 | 0.5142 | — | 0.7946 | 0.4266 | — | 0.8720 | 0.2842 | — |
-| Residual Markov | 0.7606 | 0.4753 | — | 0.8215 | 0.3530 | — | 0.8834 | 0.2002 | — |
+| Markov Ensemble | 0.7606 | 0.4753 | — | 0.8215 | 0.3530 | — | 0.8834 | 0.2002 | — |
 
-The baseline Markov model uses only the tennis score state. The asymmetric Markov model adds pre-match player strength through Elo-based serve probabilities. The serve-shrink model updates those probabilities using observed in-match serving data. The residual Markov model adds a machine-learning correction on top of the structural Markov prediction and performs best overall in this comparison, especially by log loss.
+The baseline Markov model uses only the tennis score state. The asymmetric Markov model adds pre-match player strength through Elo-based serve probabilities. The serve-shrink model updates those probabilities using observed in-match serving data. The Markov Ensemble model adds a machine-learning correction on top of the structural Markov prediction and performs best overall in this comparison, especially by log loss.
 
 The full result table is saved in:
 
 ```text
-images/residual_markov_live_features_accuracy.csv
+images/markov_ensemble_live_features_accuracy.csv
 ```
 
 Calibration results are saved in:
@@ -204,8 +204,8 @@ Run the model scripts from the repository root:
 python models/baseline_markov.py
 python models/asymmetric_markov.py
 python models/serve_shrink_model.py
-python models/baseline_xgboost.py
-python models/residual_markov.py
+python models/baseline_gbm.py
+python models/markov_ensemble.py
 ```
 
 Run calibration analysis from the repository root:

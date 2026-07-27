@@ -4,23 +4,20 @@ This script evaluates whether predicted win probabilities match observed win rat
 It saves reliability diagrams and calibration tables into the images folder.
 
 Outputs:
-    images/calibration_curve_raw_25.png
-    images/calibration_curve_raw_50.png
-    images/calibration_curve_raw_75.png
-    images/calibration_curve_calibrated_25.png
-    images/calibration_curve_calibrated_50.png
-    images/calibration_curve_calibrated_75.png
+    images/calibration_curve.png
+    images/calibration_curve.pdf
     images/calibration_summary.csv
     images/calibration_bins.csv
 """
 from pathlib import Path
 import sys
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, brier_score_loss, log_loss
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -318,78 +315,49 @@ def tune_residual_model(train, val, base, slope, kappa):
     return best_params, best_ll, columns
 
 
-def raw_predictions_for_fraction(match_fraction):
+def predictions_for_fraction(match_fraction):
     train, val, test = split(load(with_elo=True, match_fraction=match_fraction))
 
-    y_val = val.y.values
     y_test = test.y.values
 
-    val_pred = {}
     test_pred = {}
-    tuning = {"match_fraction": match_fraction, "percent": int(round(match_fraction * 100))}
+    tuning = {
+        "match_fraction": match_fraction,
+        "percent": None if match_fraction is None else int(round(match_fraction * 100)),
+    }
 
     symmetric_p, symmetric_ll = tune_symmetric_p(val)
-    val_pred["Symmetric Markov"] = predict(val, symmetric_p, symmetric_p, STATE)
     test_pred["Symmetric Markov"] = predict(test, symmetric_p, symmetric_p, STATE)
     tuning["symmetric_p"] = symmetric_p
     tuning["symmetric_val_logloss"] = symmetric_ll
 
     (base, slope), markov_ll = tune_markov_params(val)
-    val_pred["Asymmetric Markov"] = markov_prediction(val, base, slope)
     test_pred["Asymmetric Markov"] = markov_prediction(test, base, slope)
     tuning["base"] = base
     tuning["slope"] = slope
     tuning["markov_val_logloss"] = markov_ll
 
     kappa, serve_shrink_ll = tune_serve_shrink_kappa(val, base, slope)
-    val_pred["Serve-shrink Markov"] = serve_shrink_prediction(val, base, slope, kappa)
     test_pred["Serve-shrink Markov"] = serve_shrink_prediction(test, base, slope, kappa)
     tuning["kappa"] = kappa
     tuning["serve_shrink_val_logloss"] = serve_shrink_ll
 
     params, residual_ll, columns = tune_residual_model(train, val, base, slope, kappa)
 
-    x_train, _ = make_features(train, base, slope, kappa, columns)
-    x_val, _ = make_features(val, base, slope, kappa, columns)
-    residual_val_model = fit_residual_model(x_train, train.y.values, params)
-    val_pred["Residual Markov"] = residual_val_model.predict_proba(x_val)[:, 1]
-
     train_val = pd.concat([train, val], ignore_index=True)
     x_train_val, _ = make_features(train_val, base, slope, kappa, columns)
     x_test, _ = make_features(test, base, slope, kappa, columns)
     residual_test_model = fit_residual_model(x_train_val, train_val.y.values, params)
-    test_pred["Residual Markov"] = residual_test_model.predict_proba(x_test)[:, 1]
+    test_pred["Markov Ensemble"] = residual_test_model.predict_proba(x_test)[:, 1]
 
     tuning["residual_val_logloss"] = residual_ll
     tuning["residual_params"] = str(params)
     tuning["n_features"] = len(columns)
 
-    return y_val, y_test, val_pred, test_pred, tuning
+    return y_test, test_pred, tuning
 
 
-def fit_logistic_calibrator(y_val, p_val):
-    """Fit a Platt-style logistic calibrator from validation predictions."""
-    y_val = np.asarray(y_val, dtype=int)
-    p_val = clipped(p_val)
-
-    if len(np.unique(y_val)) < 2:
-        return None
-
-    model = LogisticRegression(max_iter=1000)
-    model.fit(logit(p_val).reshape(-1, 1), y_val)
-    return model
-
-
-def apply_logistic_calibrator(calibrator, p):
-    p = clipped(p)
-
-    if calibrator is None:
-        return p
-
-    return clipped(calibrator.predict_proba(logit(p).reshape(-1, 1))[:, 1])
-
-
-def calibration_table(y_true, pred, model_name, variant, match_fraction):
+def calibration_table(y_true, pred, model_name, match_fraction):
     y_true = np.asarray(y_true, dtype=float)
     pred = clipped(pred)
 
@@ -413,7 +381,6 @@ def calibration_table(y_true, pred, model_name, variant, match_fraction):
                 "match_fraction": match_fraction,
                 "percent": int(round(match_fraction * 100)),
                 "model": model_name,
-                "variant": variant,
                 "bin": bin_id + 1,
                 "bin_low": bins[bin_id],
                 "bin_high": bins[bin_id + 1],
@@ -439,14 +406,13 @@ def maximum_calibration_error(bin_df):
     return float(bin_df["abs_calibration_error"].max())
 
 
-def metric_row(y_true, pred, model_name, variant, match_fraction, bin_df):
+def metric_row(y_true, pred, model_name, match_fraction, bin_df):
     pred = clipped(pred)
 
     return {
         "match_fraction": match_fraction,
         "percent": int(round(match_fraction * 100)),
         "model": model_name,
-        "variant": variant,
         "logloss": log_loss(y_true, pred, labels=[0, 1]),
         "brier": brier_score_loss(y_true, pred),
         "accuracy": accuracy_score(y_true, pred >= 0.5),
@@ -455,41 +421,44 @@ def metric_row(y_true, pred, model_name, variant, match_fraction, bin_df):
     }
 
 
-def plot_reliability_curve(bin_results, summary, match_fraction, variant):
-    percent = int(round(match_fraction * 100))
-    subset = bin_results[
-        (bin_results["match_fraction"] == match_fraction) & (bin_results["variant"] == variant)
-    ]
-    summary_subset = summary[
-        (summary["match_fraction"] == match_fraction) & (summary["variant"] == variant)
-    ]
+def plot_reliability_curve(bin_results):
+    plt.figure(figsize=(12, 8))
+    plt.plot(
+        [0, 100],
+        [0, 100],
+        linestyle="--",
+        linewidth=3,
+        label="Perfect calibration",
+    )
 
-    plt.figure(figsize=(8, 6))
-    plt.plot([0, 1], [0, 1], linestyle="--", label="Perfect calibration")
-
-    for model_name in summary_subset["model"]:
-        model_bins = subset[subset["model"] == model_name]
+    for match_fraction in MATCH_FRACTIONS:
+        model_bins = bin_results[bin_results["match_fraction"] == match_fraction]
         if model_bins.empty:
             continue
 
         plt.plot(
-            model_bins["mean_predicted_probability"],
-            model_bins["observed_win_rate"],
+            100 * model_bins["mean_predicted_probability"],
+            100 * model_bins["observed_win_rate"],
             marker="o",
-            label=model_name,
+            markersize=8,
+            linewidth=3,
+            label=f"{int(round(100 * match_fraction))}%",
         )
 
-    plt.xlabel("Mean Predicted Win Probability")
-    plt.ylabel("Observed Win Rate")
-    plt.title(f"Reliability Diagram at {percent}% Match Progress ({variant})")
-    plt.xlim(0, 1)
-    plt.ylim(0, 1)
-    plt.grid(True, alpha=0.3)
-    plt.legend()
+    plt.xlabel("Predicted Probability of Winning (%)", fontsize=20)
+    plt.ylabel("Actual Win Percentage (%)", fontsize=20)
+    plt.title("Markov Ensemble Calibration by Match Progress", fontsize=22)
+    plt.xlim(0, 100)
+    plt.ylim(0, 100)
+    plt.xticks(fontsize=16)
+    plt.yticks(fontsize=16)
+    plt.legend(fontsize=16)
     plt.tight_layout()
 
-    path = IMAGE_DIR / f"calibration_curve_{variant}_{percent}.png"
-    plt.savefig(path, dpi=200)
+    path = IMAGE_DIR / "calibration_curve.png"
+    pdf_path = IMAGE_DIR / "calibration_curve.pdf"
+    plt.savefig(path, dpi=200, bbox_inches="tight")
+    plt.savefig(pdf_path, bbox_inches="tight")
     plt.close()
 
     return path
@@ -506,43 +475,21 @@ def evaluate_calibration():
         percent = int(round(match_fraction * 100))
         print(f"\nevaluating calibration at {percent}% match progress")
 
-        y_val, y_test, val_raw, test_raw, tuning = raw_predictions_for_fraction(match_fraction)
+        y_test, test_pred, tuning = predictions_for_fraction(match_fraction)
         tuning_rows.append(tuning)
 
-        for model_name, raw_test_pred in test_raw.items():
-            raw_bin_df = calibration_table(
-                y_test,
-                raw_test_pred,
-                model_name,
-                "raw",
-                match_fraction,
-            )
-            all_bins.append(raw_bin_df)
-            all_summary.append(
-                metric_row(y_test, raw_test_pred, model_name, "raw", match_fraction, raw_bin_df)
-            )
-
-            calibrator = fit_logistic_calibrator(y_val, val_raw[model_name])
-            calibrated_test_pred = apply_logistic_calibrator(calibrator, raw_test_pred)
-
-            calibrated_bin_df = calibration_table(
-                y_test,
-                calibrated_test_pred,
-                model_name,
-                "calibrated",
-                match_fraction,
-            )
-            all_bins.append(calibrated_bin_df)
-            all_summary.append(
-                metric_row(
-                    y_test,
-                    calibrated_test_pred,
-                    model_name,
-                    "calibrated",
-                    match_fraction,
-                    calibrated_bin_df,
-                )
-            )
+        model_name = "Markov Ensemble"
+        probability = test_pred[model_name]
+        bin_df = calibration_table(
+            y_test,
+            probability,
+            model_name,
+            match_fraction,
+        )
+        all_bins.append(bin_df)
+        all_summary.append(
+            metric_row(y_test, probability, model_name, match_fraction, bin_df)
+        )
 
     bins = pd.concat(all_bins, ignore_index=True)
     summary = pd.DataFrame(all_summary)
@@ -556,10 +503,8 @@ def evaluate_calibration():
     summary.to_csv(summary_path, index=False)
     tuning.to_csv(tuning_path, index=False)
 
-    for match_fraction in MATCH_FRACTIONS:
-        for variant in ["raw", "calibrated"]:
-            path = plot_reliability_curve(bins, summary, match_fraction, variant)
-            print(f"saved graph to {path}")
+    path = plot_reliability_curve(bins)
+    print(f"saved graph to {path}")
 
     print(f"saved calibration bins to {bins_path}")
     print(f"saved calibration summary to {summary_path}")
@@ -568,9 +513,9 @@ def evaluate_calibration():
     print("\nCalibration summary:")
     print(
         summary[
-            ["percent", "model", "variant", "logloss", "brier", "accuracy", "ece", "mce"]
+            ["percent", "model", "logloss", "brier", "accuracy", "ece", "mce"]
         ]
-        .sort_values(["percent", "variant", "model"])
+        .sort_values(["percent", "model"])
         .round(4)
         .to_string(index=False)
     )
