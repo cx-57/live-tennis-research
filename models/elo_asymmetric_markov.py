@@ -1,4 +1,4 @@
-"""Asymmetric Markov with a pre-match Elo prior.
+"""Elo-asymmetric Markov with a pre-match Elo prior.
 
 The recursion is the same as the anchor, but the two players are given different serve-win
 probabilities set by the pre-match Elo gap: base plus or minus a slope times the rating
@@ -34,8 +34,8 @@ def main():
     best, best_ll = None, float("inf")
 
     # Tune base serve strength and Elo slope on the validation season
-    for base in [0.61, 0.62, 0.63, 0.64]:
-        for slope in [4e-5, 6e-5, 9e-5, 1.3e-4, 1.8e-4]:
+    for base in [0.59, 0.60, 0.61, 0.62, 0.63, 0.64, 0.65]:
+        for slope in [4e-5, 6e-5, 9e-5, 1.3e-4, 1.8e-4, 2.2e-4]:
             ll = val_logloss(val.y.values, predict(val, *serve_probs(val, base, slope), STATE))
             if ll < best_ll:
                 best, best_ll = (base, slope), ll
@@ -43,7 +43,7 @@ def main():
     base, slope = best
     print(f"calibrated base={base} slope={slope}")
 
-    report("asymmetric Markov (Elo prior)", test.y.values,
+    report("Elo-asymmetric Markov", test.y.values,
            predict(test, *serve_probs(test, base, slope), STATE))
 
 

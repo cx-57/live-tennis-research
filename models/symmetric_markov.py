@@ -30,7 +30,7 @@ def main():
 
     print(f"calibrated serve-win probability p = {best_p}")
 
-    report("symmetric Markov", test.y.values, predict(test, best_p, best_p, STATE))
+    report("Symmetric Markov", test.y.values, predict(test, best_p, best_p, STATE))
 
 
 if __name__ == "__main__":

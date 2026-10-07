@@ -14,8 +14,8 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from common import load, split, report, val_logloss, STATE
-from markov import predict
+from src.common import load, split, report, val_logloss, STATE
+from src.markov import predict
 
 MATCH_FRACTION = 0.50
 
@@ -42,3 +42,17 @@ def serve_probs(df, base, slope, kappa):
     pb = (p2_n * p2_rate + kappa * prior_b) / (p2_n + kappa)
 
     return np.clip(pa, 0.45, 0.88), np.clip(pb, 0.45, 0.88)
+
+
+def main():
+    from models.trace import tune_markov_params, tune_serve_shrink_kappa
+    _, validation, test = split(load(with_elo=True, match_fraction=MATCH_FRACTION))
+    (base, slope), _ = tune_markov_params(validation)
+    kappa, _ = tune_serve_shrink_kappa(validation, base, slope)
+    print(f"base={base} slope={slope} kappa={kappa}")
+    report("Serve-shrink Markov", test.y.values,
+           predict(test, *serve_probs(test, base, slope, kappa), STATE))
+
+
+if __name__ == "__main__":
+    main()

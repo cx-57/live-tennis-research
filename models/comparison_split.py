@@ -19,8 +19,8 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, log_loss
 
-from models import baseline_gbm
-from models import markov_ensemble as residual
+from models import hgbm
+from models import trace
 from src.common import STATE, at_match_fraction, load, val_logloss
 from src.markov import predict
 
@@ -29,7 +29,7 @@ TRAIN_YEARS = tuple(year for year in range(2011, 2020) if year not in (2014, 201
 DEV_YEAR = 2017
 TEST_YEAR = 2014
 CHECKPOINTS = (0.25, 0.50, 0.75, None)
-OUTPUT_PATH = ROOT / "images" / "year_split_2011_2019_dev2017_test2014.csv"
+OUTPUT_PATH = ROOT / "results" / "year_split_2011_2019_dev2017_test2014.csv"
 
 
 def experiment_split(frame: pd.DataFrame):
@@ -87,24 +87,24 @@ def evaluate_no_elo(full: pd.DataFrame, fraction: float | None):
         )
     )
 
-    x_train = baseline_gbm.feature_matrix(train)
-    x_validation = baseline_gbm.feature_matrix(validation)
+    x_train = hgbm.feature_matrix(train)
+    x_validation = hgbm.feature_matrix(validation)
     best_params, best_loss = None, float("inf")
-    for params in baseline_gbm.MODEL_GRID:
-        model = baseline_gbm.fit_model(x_train, train.y.to_numpy(), params)
+    for params in hgbm.MODEL_GRID:
+        model = hgbm.fit_model(x_train, train.y.to_numpy(), params)
         probability = model.predict_proba(x_validation)[:, 1]
         loss = val_logloss(validation.y.to_numpy(), probability)
         if loss < best_loss:
             best_params, best_loss = params, loss
 
     train_validation = pd.concat([train, validation], ignore_index=True)
-    model = baseline_gbm.fit_model(
-        baseline_gbm.feature_matrix(train_validation),
+    model = hgbm.fit_model(
+        hgbm.feature_matrix(train_validation),
         train_validation.y.to_numpy(),
         best_params,
     )
-    probability = model.predict_proba(baseline_gbm.feature_matrix(test))[:, 1]
-    rows.append(metrics("baseline_gbm", fraction, test, probability, **best_params))
+    probability = model.predict_proba(hgbm.feature_matrix(test))[:, 1]
+    rows.append(metrics("hgbm", fraction, test, probability, **best_params))
     return rows
 
 
@@ -113,17 +113,17 @@ def evaluate_with_elo(full: pd.DataFrame, fraction: float | None):
     train, validation, test = experiment_split(frame)
     rows = []
 
-    (base, slope), _ = residual.tune_markov_params(validation)
-    markov_probability = residual.markov_prediction(test, base, slope)
+    (base, slope), _ = trace.tune_markov_params(validation)
+    markov_probability = trace.markov_prediction(test, base, slope)
     rows.append(
         metrics(
-            "asymmetric_markov", fraction, test, markov_probability,
+            "elo_asymmetric_markov", fraction, test, markov_probability,
             base=base, slope=slope,
         )
     )
 
-    kappa, _ = residual.tune_serve_shrink_kappa(validation, base, slope)
-    shrink_probability = residual.serve_shrink_prediction(
+    kappa, _ = trace.tune_serve_shrink_kappa(validation, base, slope)
+    shrink_probability = trace.serve_shrink_prediction(
         test, base, slope, kappa
     )
     rows.append(
@@ -133,20 +133,20 @@ def evaluate_with_elo(full: pd.DataFrame, fraction: float | None):
         )
     )
 
-    model_params, _, columns = residual.tune_residual_model(
+    model_params, _, columns = trace.tune_trace_model(
         train, validation, base, slope, kappa, random_state=42
     )
-    model = residual.refit_on_train_val(
+    model = trace.refit_on_train_val(
         train, validation, base, slope, kappa, columns, model_params,
         random_state=42,
     )
-    x_test, _ = residual.make_features(
+    x_test, _ = trace.make_features(
         test, base, slope, kappa, columns
     )
-    residual_probability = model.predict_proba(x_test)[:, 1]
+    trace_probability = model.predict_proba(x_test)[:, 1]
     rows.append(
         metrics(
-            "markov_ensemble", fraction, test, residual_probability,
+            "trace", fraction, test, trace_probability,
             base=base, slope=slope, kappa=kappa, **model_params,
         )
     )
@@ -175,7 +175,7 @@ def main():
         print_rows(result)
     del no_elo
 
-    print("\nLoading Elo data for structured and residual models...", flush=True)
+    print("\nLoading Elo data for structured models and Trace...", flush=True)
     with_elo = load(with_elo=True)
     for fraction in CHECKPOINTS:
         label = "all points" if fraction is None else f"{fraction:.0%}"
